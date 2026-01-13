@@ -1,0 +1,94 @@
+:root{
+  --bg:#0b1220;
+  --card:#121a2b;
+  --text:#eef2ff;
+  --muted:#a6b0c3;
+  --line:#22304f;
+  --accent:#5ea1ff;
+  --danger:#ff6b6b;
+}
+
+*{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+body{margin:0;background:linear-gradient(140deg,#071022,#0d1630);color:var(--text)}
+.page{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.hidden{display:none}
+
+.card{
+  background:rgba(18,26,43,.92);
+  border:1px solid rgba(34,48,79,.7);
+  border-radius:16px;
+  padding:22px;
+  width:min(420px,92vw);
+  box-shadow:0 10px 35px rgba(0,0,0,.35);
+}
+.card.wide{width:min(920px,94vw)}
+h1,h2{margin:0 0 6px}
+p{margin:6px 0 12px}
+.muted{color:var(--muted)}
+label{display:block;margin:10px 0 6px;color:var(--muted);font-size:14px}
+
+input,select{
+  width:100%;
+  padding:12px 12px;
+  border-radius:12px;
+  border:1px solid rgba(34,48,79,.9);
+  background:#0c1324;
+  color:var(--text);
+  outline:none;
+}
+input:focus,select:focus{border-color:rgba(94,161,255,.9);box-shadow:0 0 0 3px rgba(94,161,255,.15)}
+
+button{
+  margin-top:14px;
+  width:100%;
+  padding:12px 14px;
+  border-radius:12px;
+  border:0;
+  background:linear-gradient(135deg,#4b8dff,#6cc3ff);
+  color:#071022;
+  font-weight:700;
+  cursor:pointer;
+}
+button:hover{filter:brightness(1.05)}
+button:disabled{opacity:.6;cursor:not-allowed}
+
+.topbar{
+  width:min(920px,94vw);
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  margin-bottom:14px;
+}
+.ghost{
+  width:auto;
+  margin-top:0;
+  background:transparent;
+  color:var(--text);
+  border:1px solid rgba(34,48,79,.9);
+}
+.ghost:hover{background:rgba(34,48,79,.25)}
+
+.grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:14px;
+}
+.span2{grid-column:span 2}
+
+.actions{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-top:10px;
+}
+.actions button{width:auto;min-width:260px;margin-top:0}
+.hint{font-size:12px;color:var(--muted)}
+.error{color:var(--danger);margin-top:10px;min-height:18px}
+
+@media (max-width:720px){
+  .grid{grid-template-columns:1fr}
+  .span2{grid-column:span 1}
+  .actions{flex-direction:column;align-items:flex-start}
+  .actions button{width:100%}
+}
