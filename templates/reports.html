@@ -11,7 +11,7 @@
     .card { background:#121b2f; padding: 18px; border-radius: 14px; margin-top: 16px; }
     label { display:block; margin-top:12px; font-weight:600; }
     input, select { width:100%; padding:10px; margin-top:6px; border-radius:10px; border:1px solid #2a3a66; background:#0b1220; color:#e8eefc; }
-    .row { display:grid; grid-template-columns: 1fr 1fr; gap:28px; margin-top:6px; }
+    .row { display:grid; grid-template-columns: 1fr 1fr; gap:25px; margin-top:6px; }
     button { width:100%; padding:12px; border:0; border-radius:10px; background:#22c55e; color:white; font-weight:800; cursor:pointer; margin-top:16px; }
     a { color:#93c5fd; text-decoration:none; }
     .msg { background:#2a1730; border:1px solid #6b2b7a; padding:10px; border-radius:10px; margin-bottom:10px; }
@@ -40,10 +40,7 @@
           <div class="msg">{{ messages[0] }}</div>
         {% endif %}
       {% endwith %}
-      <div class="msg" style="background:#0b1220;border-color:#2a3a66;">
-          debug: clients={{ clients|length if clients is defined else "undef" }}
-        | accounts={{ accounts|length if accounts is defined else "undef" }}
-      </div>
+      
 
      <a href="/connect" style="display:inline-block;padding:10px 14px;border-radius:10px;background:#f59e0b;color:#111827;font-weight:800;text-decoration:none;">
       Conectar QuickBooks
