@@ -3,95 +3,243 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <title>Reportes</title>
+  <title>Aliada | Reportes</title>
+  <style>
+    body { background: #f6f7fb; }
+    .brand { font-weight: 700; letter-spacing: .2px; }
+    .card { border: 0; border-radius: 14px; }
+    .soft { background: #ffffff; }
+    .muted { color:#6c757d; }
+    .tag { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: #eef2ff; color: #3b5bdb; }
+    .sticky-actions { position: sticky; bottom: 0; background: rgba(246,247,251,.92); backdrop-filter: blur(6px); padding: 12px 0; }
+    select[multiple] { min-height: 260px; }
+  </style>
 </head>
-<body class="bg-light">
-<div class="container py-4" style="max-width:900px">
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="m-0">Generar Reporte QBO</h4>
-    <form method="post" action="/logout"><button class="btn btn-outline-secondary btn-sm">Salir</button></form>
+
+<body>
+<nav class="navbar navbar-expand-lg bg-white border-bottom">
+  <div class="container" style="max-width: 980px;">
+    <span class="navbar-brand brand">Aliada</span>
+    <span class="tag">QuickBooks Reports</span>
+
+    <div class="ms-auto d-flex gap-2 align-items-center">
+      <span class="muted small">Sesión: <b><%= user.username %></b></span>
+      <form method="post" action="/logout" class="m-0">
+        <button class="btn btn-outline-secondary btn-sm">Salir</button>
+      </form>
+    </div>
+  </div>
+</nav>
+
+<div class="container py-4" style="max-width: 980px;">
+
+  <% if (error) { %>
+    <div class="alert alert-danger"><%= error %></div>
+  <% } %>
+
+  <!-- Admin quick add company -->
+  <div class="card shadow-sm mb-3 soft">
+    <div class="card-body">
+      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div>
+          <h6 class="mb-0">Empresas</h6>
+          <div class="muted small">Agrega/actualiza la empresa y su realmId de QuickBooks.</div>
+        </div>
+      </div>
+
+      <form class="row g-2 mt-2" method="post" action="/admin/companies">
+        <div class="col-md-3">
+          <input class="form-control" name="id" placeholder="cli_001" required>
+        </div>
+        <div class="col-md-5">
+          <input class="form-control" name="name" placeholder="Nombre empresa" required>
+        </div>
+        <div class="col-md-3">
+          <input class="form-control" name="realmId" placeholder="realmId QBO" required>
+        </div>
+        <div class="col-md-1 d-grid">
+          <button class="btn btn-success">Guardar</button>
+        </div>
+      </form>
+    </div>
   </div>
 
-  <div class="card shadow-sm"><div class="card-body p-4">
-    <form id="f" class="row g-3">
-      <div class="col-md-6">
-        <label class="form-label">Empresa</label>
-        <select class="form-select" name="companyClientId" required>
-          <% companies.forEach(c => { %><option value="<%= c.clientId %>"><%= c.name %></option><% }) %>
-        </select>
+  <!-- Report form -->
+  <div class="card shadow-sm soft">
+    <div class="card-body p-4">
+      <div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-2">
+        <div>
+          <h5 class="mb-0">Generar reporte</h5>
+          <div class="muted small">Elige empresa, rango de fechas y cuentas a excluir (desde QBO).</div>
+        </div>
+        <div class="muted small">
+          Empresas activas: <b><%= companies.length %></b>
+        </div>
       </div>
 
-      <div class="col-md-6">
-        <label class="form-label">Tipo de reporte</label>
-        <select class="form-select" name="reportType" required>
-          <% reports.forEach(r => { %><option value="<%= r.id %>"><%= r.name %></option><% }) %>
-        </select>
-      </div>
+      <% if (companies.length === 0) { %>
+        <div class="alert alert-warning mt-3">
+          No hay empresas registradas. Agrega una arriba (id, nombre, realmId).
+        </div>
+      <% } %>
 
-      <div class="col-md-6">
-        <label class="form-label">Fecha inicio</label>
-        <input class="form-control" type="date" name="startDate" required>
-      </div>
+      <form id="reportForm" class="row g-3 mt-1">
+        <div class="col-md-6">
+          <label class="form-label">Empresa</label>
+          <select class="form-select" id="companySel" name="companyId" <%= companies.length===0 ? "disabled" : "" %> required>
+            <% companies.forEach(c => { %>
+              <option value="<%= c.id %>" data-realm="<%= c.realm_id %>"><%= c.name %></option>
+            <% }) %>
+          </select>
+          <div class="form-text">Se usa el realmId para consultar QuickBooks en n8n.</div>
+        </div>
 
-      <div class="col-md-6">
-        <label class="form-label">Fecha final</label>
-        <input class="form-control" type="date" name="endDate" required>
-      </div>
+        <div class="col-md-6">
+          <label class="form-label">Tipo de reporte</label>
+          <select class="form-select" id="reportType" name="reportType" required>
+            <% reports.forEach(r => { %>
+              <option value="<%= r.id %>"><%= r.name %></option>
+            <% }) %>
+          </select>
+        </div>
 
-      <div class="col-12">
-        <label class="form-label">Excluir cuentas (coma)</label>
-        <input class="form-control" name="excludeAccounts" placeholder="ITBMS, 6010 Gasolina">
-      </div>
+        <div class="col-md-6">
+          <label class="form-label">Fecha inicio</label>
+          <input class="form-control" id="startDate" type="date" required />
+        </div>
 
-      <div class="col-12 d-grid">
-        <button class="btn btn-primary btn-lg">Submit / Descargar Excel</button>
-      </div>
+        <div class="col-md-6">
+          <label class="form-label">Fecha final</label>
+          <input class="form-control" id="endDate" type="date" required />
+        </div>
 
-      <div class="text-danger" id="err"></div>
-    </form>
-  </div></div>
+        <div class="col-12">
+          <label class="form-label">Excluir cuentas contables (desde QBO)</label>
+          <select class="form-select" id="excludeSel" multiple size="10" <%= companies.length===0 ? "disabled" : "" %>></select>
+          <div class="form-text">Tip: Ctrl/⌘ + click para seleccionar varias.</div>
+        </div>
+
+        <div class="col-12">
+          <div class="text-danger small" id="err"></div>
+          <div class="text-muted small" id="status"></div>
+        </div>
+
+        <div class="sticky-actions">
+          <div class="d-grid">
+            <button class="btn btn-primary btn-lg" id="btnSubmit" <%= companies.length===0 ? "disabled" : "" %>>
+              Submit / Descargar Excel
+            </button>
+          </div>
+        </div>
+      </form>
+
+    </div>
+  </div>
 </div>
 
 <script>
-  const form = document.getElementById("f");
+  const companySel = document.getElementById("companySel");
+  const excludeSel = document.getElementById("excludeSel");
+  const form = document.getElementById("reportForm");
   const err = document.getElementById("err");
+  const statusEl = document.getElementById("status");
+  const btnSubmit = document.getElementById("btnSubmit");
 
-  form.addEventListener("submit", async (e) => {
+  async function loadAccounts() {
+    err.textContent = "";
+    statusEl.textContent = "";
+    excludeSel.innerHTML = "";
+
+    if (!companySel) return;
+    const opt = companySel.selectedOptions[0];
+    const realmId = opt?.dataset?.realm;
+    if (!realmId) return;
+
+    try {
+      statusEl.textContent = "Cargando cuentas desde QuickBooks…";
+      const r = await fetch(`/api/meta/accounts?realmId=${encodeURIComponent(realmId)}`);
+      const data = await r.json();
+
+      if (!r.ok) throw new Error(data.error || "Error cargando cuentas");
+
+      const accounts = data.accounts || [];
+      if (accounts.length === 0) {
+        statusEl.textContent = "No se encontraron cuentas.";
+        return;
+      }
+
+      accounts.forEach(a => {
+        const o = document.createElement("option");
+        o.value = a.Id; // ID real
+        o.textContent = `${a.Name} (${a.AccountType}${a.AccountSubType ? " / " + a.AccountSubType : ""})`;
+        excludeSel.appendChild(o);
+      });
+
+      statusEl.textContent = `Cuentas cargadas: ${accounts.length}`;
+    } catch (e) {
+      statusEl.textContent = "";
+      err.textContent = e.message || "Error cargando cuentas";
+    }
+  }
+
+  if (companySel) {
+    companySel.addEventListener("change", loadAccounts);
+    loadAccounts();
+  }
+
+  form?.addEventListener("submit", async (e) => {
     e.preventDefault();
     err.textContent = "";
+    statusEl.textContent = "";
 
-    const fd = new FormData(form);
-    const exclude = (fd.get("excludeAccounts") || "")
-      .split(",").map(s => s.trim()).filter(Boolean);
+    const opt = companySel.selectedOptions[0];
+    const realmId = opt?.dataset?.realm;
 
-    const payload = {
-      companyClientId: fd.get("companyClientId"),
-      reportType: fd.get("reportType"),
-      startDate: fd.get("startDate"),
-      endDate: fd.get("endDate"),
-      excludeAccounts: exclude
-    };
+    const reportType = document.getElementById("reportType").value;
+    const startDate = document.getElementById("startDate").value;
+    const endDate = document.getElementById("endDate").value;
 
-    const resp = await fetch("/api/run-report", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+    if (!realmId) return err.textContent = "La empresa seleccionada no tiene realmId.";
+    if (!startDate || !endDate) return err.textContent = "Selecciona fechas.";
+    if (startDate > endDate) return err.textContent = "Fecha inicio no puede ser mayor que fecha final.";
 
-    if (!resp.ok) {
-      const data = await resp.json().catch(() => ({}));
-      err.textContent = data.error || "Error";
-      return;
+    const excludeAccountIds = Array.from(excludeSel.selectedOptions).map(o => o.value);
+
+    const payload = { realmId, reportType, startDate, endDate, excludeAccountIds };
+
+    try {
+      btnSubmit.disabled = true;
+      statusEl.textContent = "Generando reporte…";
+
+      const resp = await fetch("/api/run-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.error || "Error generando reporte");
+      }
+
+      const blob = await resp.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `QBO_${reportType}_${startDate}_${endDate}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+
+      statusEl.textContent = "Listo ✅";
+    } catch (e2) {
+      err.textContent = e2.message || "Error";
+      statusEl.textContent = "";
+    } finally {
+      btnSubmit.disabled = false;
     }
-
-    const blob = await resp.blob();
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `QBO_${payload.reportType}_${payload.startDate}_${payload.endDate}.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
   });
 </script>
+
 </body>
 </html>
