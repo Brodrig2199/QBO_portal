@@ -8,7 +8,6 @@ import requests
 from datetime import datetime, timedelta, timezone
 from token_store import init_db, save_tokens
 from flask import Flask, render_template, request, redirect, url_for, session, flash
-from qbo_client import refresh_access_token, get_customers, get_accounts
 from qbo_client import get_valid_access_token, get_customers, get_accounts
 
 
