@@ -31,6 +31,11 @@
           <div class="msg">{{ messages[0] }}</div>
         {% endif %}
       {% endwith %}
+      <div class="msg" style="background:#0b1220;border-color:#2a3a66;">
+          debug: clients={{ clients|length if clients is defined else "undef" }}
+        | accounts={{ accounts|length if accounts is defined else "undef" }}
+      </div>
+
      <a href="/connect" style="display:inline-block;padding:10px 14px;border-radius:10px;background:#f59e0b;color:#111827;font-weight:800;text-decoration:none;">
       Conectar QuickBooks
      </a>
