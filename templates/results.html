@@ -35,14 +35,14 @@
             <th>Monto</th>
           </tr>
         </thead>
-        <tbody>
-          {% for r in data.rows %}
+        <tfoot>
             <tr>
-              <td>{{ r.account }}</td>
-              <td>{{ "%.2f"|format(r.amount) }}</td>
+              <th>Total</th>
+              <th>
+                {{ "%.2f"|format(data.rows|sum(attribute="amount")) }}
+              </th>
             </tr>
-          {% endfor %}
-        </tbody>
+        </tfoot>
       </table>
     </div>
   </div>
