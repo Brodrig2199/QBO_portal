@@ -1,8 +1,16 @@
 import os
 from datetime import datetime
 from functools import wraps
-
+from token_store import init_db
+import secrets
+import base64
+import requests
+from datetime import datetime, timedelta, timezone
+from token_store import init_db, save_tokens
 from flask import Flask, render_template, request, redirect, url_for, session, flash
+from qbo_client import refresh_access_token, get_customers, get_accounts
+from qbo_client import get_valid_access_token, get_customers, get_accounts
+
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-me")
@@ -117,17 +125,134 @@ def login_post():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+@app.get("/connect")
+def connect():
+    """
+    Redirige al usuario a Intuit para autorizar la app.
+    """
+    client_id = os.environ.get("QBO_CLIENT_ID", "")
+    redirect_uri = os.environ.get("QBO_REDIRECT_URI", "")
+    if not client_id or not redirect_uri:
+        return "Faltan QBO_CLIENT_ID o QBO_REDIRECT_URI en env vars", 500
+
+    # Sandbox y Production usan el mismo authorize host
+    authorize_url = "https://appcenter.intuit.com/connect/oauth2"
+
+    # Scope: contabilidad (para Customers, Accounts, Reports)
+    scope = "com.intuit.quickbooks.accounting"
+
+    # State: anti-CSRF
+    state = secrets.token_urlsafe(24)
+    session["oauth_state"] = state
+
+    # (Opcional) guarda “a dónde volver” después
+    session["after_auth"] = request.args.get("next") or url_for("reports")
+
+    params = {
+        "client_id": client_id,
+        "response_type": "code",
+        "scope": scope,
+        "redirect_uri": redirect_uri,
+        "state": state,
+    }
+
+    # Construir URL con querystring
+    from urllib.parse import urlencode
+    return redirect(f"{authorize_url}?{urlencode(params)}")
+
+@app.get("/callback")
+def callback():
+    """
+    Recibe code + realmId desde Intuit, intercambia por tokens, y guarda en DB.
+    """
+    code = request.args.get("code")
+    realm_id = request.args.get("realmId")
+    state = request.args.get("state")
+    err = request.args.get("error")
+
+    if err:
+        desc = request.args.get("error_description", err)
+        return f"Autorización falló: {desc}", 400
+
+    # Validar state anti-CSRF
+    saved_state = session.get("oauth_state")
+    if not saved_state or state != saved_state:
+        return "State inválido. Reintenta /connect.", 400
+
+    if not code or not realm_id:
+        return "Faltan parámetros code o realmId.", 400
+
+    client_id = os.environ.get("QBO_CLIENT_ID", "")
+    client_secret = os.environ.get("QBO_CLIENT_SECRET", "")
+    redirect_uri = os.environ.get("QBO_REDIRECT_URI", "")
+    if not client_id or not client_secret or not redirect_uri:
+        return "Faltan env vars QBO_CLIENT_ID/SECRET/REDIRECT_URI", 500
+
+    token_url = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+
+    # Basic Auth = base64(client_id:client_secret)
+    basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+
+    headers = {
+        "Authorization": f"Basic {basic}",
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": redirect_uri,
+    }
+
+    r = requests.post(token_url, headers=headers, data=data, timeout=30)
+    if r.status_code >= 400:
+        return f"Token exchange failed ({r.status_code}): {r.text}", 400
+
+    payload = r.json()
+    access_token = payload.get("access_token")
+    refresh_token = payload.get("refresh_token")
+    expires_in = int(payload.get("expires_in", 3600))
+
+    if not access_token or not refresh_token:
+        return f"Respuesta incompleta: {payload}", 400
+
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+
+    # Guardar tokens en DB (fuente de verdad)
+    save_tokens(realm_id=realm_id, access_token=access_token, refresh_token=refresh_token, access_expires_at=expires_at)
+
+    # Limpia state
+    session.pop("oauth_state", None)
+
+    flash("QuickBooks conectado ✅")
+    return redirect(session.pop("after_auth", url_for("reports")))
+
 
 
 @app.get("/reports")
 @login_required
 def reports():
-    # Defaults: hoy y hace 30 días (opcional)
-    return render_template(
-        "reports.html",
-        clients=CLIENTS,
-        report_types=REPORT_TYPES
-    )
+    try:
+        access_token, realm_id = get_valid_access_token()
+
+        clients = [{"id": "all", "name": "Todos los clientes"}] + get_customers(access_token, realm_id)
+        accounts = get_accounts(access_token, realm_id)
+
+        return render_template(
+            "reports.html",
+            clients=clients,
+            accounts=accounts,
+            report_types=REPORT_TYPES
+        )
+    except Exception as e:
+        flash(f"QuickBooks no conectado o error: {e}. Ve a /connect.")
+        return render_template(
+            "reports.html",
+            clients=[{"id": "all", "name": "Todos los clientes"}],
+            accounts=[],
+            report_types=REPORT_TYPES
+        )
 
 
 @app.post("/run-report")
@@ -138,7 +263,8 @@ def run_report():
         start_date = parse_date(request.form.get("start_date", ""))
         end_date = parse_date(request.form.get("end_date", ""))
         client_id = request.form.get("client_id", "all")
-        excluded_accounts = parse_excluded_accounts(request.form.get("excluded_accounts", ""))
+        excluded_accounts = request.form.getlist("excluded_accounts")
+
 
         if report_type not in [r["id"] for r in REPORT_TYPES]:
             flash("Tipo de reporte inválido.")
@@ -165,3 +291,4 @@ def run_report():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")))
+    init_db()
