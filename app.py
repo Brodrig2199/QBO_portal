@@ -2,8 +2,6 @@ import os
 import secrets
 import base64
 import io
-from openpyxl import Workbook
-from openpyxl.utils import get_column_letter
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
@@ -242,6 +240,10 @@ def download_qbo_pl_xlsx():
         summarize_column_by=meta.get("summarize_column_by", "Total"),
         customer_id=None if meta.get("client_id") in (None, "", "all") else meta["client_id"],
     )
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment
+    from openpyxl.utils import get_column_letter
 
     # --- Construir Excel “tipo QuickBooks” desde Columns + Rows ---
     wb = Workbook()
