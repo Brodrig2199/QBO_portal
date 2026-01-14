@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Reportes QuickBooks</title>
+  <style>
+    body { font-family: Arial, sans-serif; background:#0b1220; color:#e8eefc; }
+    .wrap { max-width: 860px; margin: 40px auto; padding: 0 16px; }
+    .top { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .card { background:#121b2f; padding: 18px; border-radius: 14px; margin-top: 16px; }
+    label { display:block; margin-top:12px; font-weight:600; }
+    input, select { width:100%; padding:10px; margin-top:6px; border-radius:10px; border:1px solid #2a3a66; background:#0b1220; color:#e8eefc; }
+    .row { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    button { width:100%; padding:12px; border:0; border-radius:10px; background:#22c55e; color:white; font-weight:800; cursor:pointer; margin-top:16px; }
+    a { color:#93c5fd; text-decoration:none; }
+    .msg { background:#2a1730; border:1px solid #6b2b7a; padding:10px; border-radius:10px; margin-bottom:10px; }
+    small { color:#b7c4ea; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <h2>Extraer Reporte de QuickBooks</h2>
+      <a href="/logout">Cerrar sesión</a>
+    </div>
+
+    <div class="card">
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="msg">{{ messages[0] }}</div>
+        {% endif %}
+      {% endwith %}
+
+      <form method="post" action="/run-report">
+        <label>Tipo de reporte</label>
+        <select name="report_type" required>
+          <option value="" disabled selected>Selecciona un reporte</option>
+          {% for r in report_types %}
+            <option value="{{ r.id }}">{{ r.name }}</option>
+          {% endfor %}
+        </select>
+
+        <div class="row">
+          <div>
+            <label>Fecha inicio</label>
+            <input type="date" name="start_date" required />
+          </div>
+          <div>
+            <label>Fecha final</label>
+            <input type="date" name="end_date" required />
+          </div>
+        </div>
+
+        <label>Cliente</label>
+        <select name="client_id" required>
+          {% for c in clients %}
+            <option value="{{ c.id }}">{{ c.name }}</option>
+          {% endfor %}
+        </select>
+
+        <label>Excluir cuentas contables</label>
+        <input
+          name="excluded_accounts"
+          placeholder="Ej: Utilities, Bank Fees, 5100"
+        />
+        <small>Separadas por coma. (Opcional)</small>
+
+        <button type="submit">Submit / Generar Reporte</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Resultado</title>
+  <style>
+    body { font-family: Arial, sans-serif; background:#0b1220; color:#e8eefc; }
+    .wrap { max-width: 860px; margin: 40px auto; padding: 0 16px; }
+    .card { background:#121b2f; padding: 18px; border-radius: 14px; margin-top: 16px; }
+    table { width:100%; border-collapse: collapse; margin-top:12px; }
+    th, td { border-bottom: 1px solid #2a3a66; padding:10px; text-align:left; }
+    a { color:#93c5fd; text-decoration:none; }
+    .meta { color:#b7c4ea; font-size: 14px; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <a href="/reports">← Volver</a>
+
+    <div class="card">
+      <h2>Reporte generado</h2>
+
+      <div class="meta">
+        <div><b>Tipo:</b> {{ data.meta.report_type }}</div>
+        <div><b>Rango:</b> {{ data.meta.start_date }} → {{ data.meta.end_date }}</div>
+        <div><b>Cliente:</b> {{ data.meta.client_id }}</div>
+        <div><b>Excluidas:</b> {{ data.meta.excluded_accounts }}</div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Cuenta</th>
+            <th>Monto</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in data.rows %}
+            <tr>
+              <td>{{ r.account }}</td>
+              <td>{{ "%.2f"|format(r.amount) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>
