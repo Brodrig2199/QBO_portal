@@ -8,7 +8,13 @@ import requests
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 
 from token_store import init_db, save_tokens
-from qbo_client import  get_valid_access_token, get_profit_and_loss, parse_pl_to_rows
+from qbo_client import (
+    get_valid_access_token,
+    get_customers,
+    get_accounts,
+    get_profit_and_loss,
+    parse_pl_to_rows
+)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-me")
@@ -179,12 +185,17 @@ def callback():
 def reports():
     try:
         access_token, realm_id = get_valid_access_token()
-        clients = [{"id": "all", "name": "Todos los clientes"}] + get_customers(access_token, realm_id)
+        clients = [{"id":"all","name":"Todos los clientes"}] + get_customers(access_token, realm_id)
         accounts = get_accounts(access_token, realm_id)
+
+        print("REPORTS OK -> clients:", len(clients), "accounts:", len(accounts))
         return render_template("reports.html", clients=clients, accounts=accounts, report_types=REPORT_TYPES)
+
     except Exception as e:
+        print("REPORTS ERROR ->", repr(e))
         flash(f"QuickBooks no conectado o error: {e}. Ve a /connect.")
         return render_template("reports.html", clients=[{"id":"all","name":"Todos los clientes"}], accounts=[], report_types=REPORT_TYPES)
+
 
 @app.post("/run-report")
 @login_required
