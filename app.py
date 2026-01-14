@@ -226,6 +226,14 @@ def callback():
 
     flash("QuickBooks conectado ✅")
     return redirect(session.pop("after_auth", url_for("reports")))
+@app.get("/_init_db")
+def _init_db_route():
+    try:
+        from token_store import init_db
+        init_db()
+        return "DB inicializada correctamente ✅"
+    except Exception as e:
+        return f"Error inicializando DB: {e}", 500
 
 
 
@@ -280,4 +288,8 @@ def run_report():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")))
-    init_db()
+    try:
+            from token_store import init_db
+            init_db()
+    except Exception as e:
+            print("DB init skipped:", e)
