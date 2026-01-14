@@ -11,11 +11,20 @@
     .card { background:#121b2f; padding: 18px; border-radius: 14px; margin-top: 16px; }
     label { display:block; margin-top:12px; font-weight:600; }
     input, select { width:100%; padding:10px; margin-top:6px; border-radius:10px; border:1px solid #2a3a66; background:#0b1220; color:#e8eefc; }
-    .row { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    .row { display:grid; grid-template-columns: 1fr 1fr; gap:28px; margin-top:6px; }
     button { width:100%; padding:12px; border:0; border-radius:10px; background:#22c55e; color:white; font-weight:800; cursor:pointer; margin-top:16px; }
     a { color:#93c5fd; text-decoration:none; }
     .msg { background:#2a1730; border:1px solid #6b2b7a; padding:10px; border-radius:10px; margin-bottom:10px; }
     small { color:#b7c4ea; }
+    .checkbox-list{margin-top:6px;border:1px solid #2a3a66;background:#0b1220;border-radius:10px;padding:10px;max-height:220px;overflow:auto;}
+    .checkbox-item{display:flex;align-items:center;gap:10px;padding:6px 4px;border-radius:8px;}
+    .checkbox-item:hover{background:#121b2f;}
+    .checkbox-item input[type="checkbox"]{width:auto;transform: scale(1.15);}
+    .checkbox-actions{display:flex;gap:10px;margin-top:8px;}
+    .checkbox-actions button{margin-top:0;width:auto;padding:8px 10px;background:#2563eb;font-weight:700;}
+    .checkbox-actions button.secondary{background:#334155;}
+    .search-box{margin-top:6px;}
+
   </style>
 </head>
 <body>
@@ -69,18 +78,47 @@
         </select>
 
        <label>Excluir cuentas contables</label>
-      <select name="excluded_accounts" multiple size="10">
-      {% for a in accounts %}
-      <option value="{{ a.name }}">{{ a.name }} ({{ a.type }})</option>
-      {% endfor %}
-      </select>
-      <small>Tip: selecciona varias con Ctrl/Command. (Opcional)</small>
+      <input class="search-box" id="accSearch" type="text" placeholder="Buscar cuenta..." />
+      <div class="checkbox-actions">
+        <button type="button" onclick="selectAllAccounts()">Seleccionar todas</button>
+        <button type="button" class="secondary" onclick="clearAllAccounts()">Limpiar</button>
+      </div>
 
+      <div class="checkbox-list" id="accList">
+        {% for a in accounts %}
+          <label class="checkbox-item" data-name="{{ (a.name ~ ' ' ~ a.type)|lower }}">
+            <input type="checkbox" name="excluded_accounts" value="{{ a.name }}">
+            <span>{{ a.name }} <small>({{ a.type }})</small></span>
+          </label>
+        {% endfor %}
+      </div>
+
+      <small>Tip: marca las cuentas que NO quieres que salgan en el reporte. (Opcional)</small>
 
 
         <button type="submit">Submit / Generar Reporte</button>
       </form>
     </div>
   </div>
+  <script>
+  function selectAllAccounts() {
+    document.querySelectorAll('#accList input[type="checkbox"]').forEach(cb => cb.checked = true);
+  }
+  function clearAllAccounts() {
+    document.querySelectorAll('#accList input[type="checkbox"]').forEach(cb => cb.checked = false);
+  }
+
+  // Filtro por búsqueda
+  const search = document.getElementById('accSearch');
+  const items = () => document.querySelectorAll('#accList .checkbox-item');
+
+  search.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase();
+    items().forEach(el => {
+      const hay = el.getAttribute('data-name') || '';
+      el.style.display = hay.includes(q) ? 'flex' : 'none';
+    });
+  });
+</script>
 </body>
 </html>
