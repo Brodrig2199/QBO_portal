@@ -111,3 +111,72 @@ def get_accounts(access_token: str, realm_id: str, active_only: bool = True, max
         "type": a.get("AccountType"),
         "subtype": a.get("AccountSubType"),
     } for a in accounts]
+def get_profit_and_loss(access_token: str, realm_id: str, start_date: str, end_date: str,
+                        accounting_method: str = "Accrual",
+                        summarize_column_by: str = "Total",
+                        customer_id: str | None = None) -> dict:
+    """
+    Llama Reports API: ProfitAndLoss
+    Docs: Run Reports (P&L) y query params start_date/end_date/accounting_method. :contentReference[oaicite:1]{index=1}
+    """
+    url = f"{_api_base()}/v3/company/{realm_id}/reports/ProfitAndLoss"
+    params = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "accounting_method": accounting_method,   # Accrual o Cash
+        "summarize_column_by": summarize_column_by,  # Total, Month, etc.
+        "minorversion": QBO_MINORVERSION,
+    }
+
+    # OJO: algunos reportes aceptan filtro por customer; si te diera error, lo quitamos
+    if customer_id and customer_id != "all":
+        params["customer"] = customer_id
+
+    r = _request("GET", url, access_token, params=params)
+    if r.status_code >= 400:
+        raise RuntimeError(f"P&L report failed ({r.status_code}): {r.text}")
+    return r.json()
+def parse_pl_to_rows(report_json: dict) -> list[dict]:
+    """
+    Convierte el report JSON (Rows/Row/ColData) a una lista:
+      [{"account": "Sales", "amount": 123.45}, ...]
+    """
+    rows_out = []
+
+    def walk(node):
+        if not node:
+            return
+
+        # "Rows" puede tener "Row" (lista)
+        if isinstance(node, dict):
+            if "Row" in node and isinstance(node["Row"], list):
+                for r in node["Row"]:
+                    walk(r)
+                return
+
+            # Cada Row puede venir como "Header", "Rows" (sub-secciones), o "ColData"
+            if "Header" in node:
+                # Header solo describe sección, seguimos
+                pass
+
+            # Si tiene ColData, normalmente es una fila con columnas
+            if "ColData" in node and isinstance(node["ColData"], list) and len(node["ColData"]) >= 2:
+                # En P&L: ColData[0] suele ser nombre, y la última el monto
+                name = (node["ColData"][0].get("value") or "").strip()
+                amt_raw = (node["ColData"][-1].get("value") or "").replace(",", "").strip()
+
+                # Evitar filas vacías o de totales raros
+                if name:
+                    try:
+                        amount = float(amt_raw) if amt_raw else 0.0
+                        rows_out.append({"account": name, "amount": amount})
+                    except ValueError:
+                        # Si no es número, igual guardamos la fila pero amount=0
+                        rows_out.append({"account": name, "amount": 0.0})
+
+            # Si tiene sub Rows, seguimos
+            if "Rows" in node:
+                walk(node["Rows"])
+
+    walk(report_json.get("Rows", {}))
+    return rows_out

@@ -8,7 +8,7 @@ import requests
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 
 from token_store import init_db, save_tokens
-from qbo_client import get_valid_access_token, get_customers, get_accounts
+from qbo_client import  get_valid_access_token, get_profit_and_loss, parse_pl_to_rows
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-me")
@@ -42,14 +42,29 @@ def parse_date(date_str: str) -> str:
     return date_str
 
 def fetch_qbo_report(report_type: str, start_date: str, end_date: str, client_id: str, excluded_accounts: list[str]):
-    demo_rows = [
-        {"account": "Sales", "amount": 2500.00},
-        {"account": "Cost of Goods Sold", "amount": -900.00},
-        {"account": "Utilities", "amount": -120.50},
-        {"account": "Bank Fees", "amount": -15.00},
-    ]
+    # Solo implementamos P&L primero
+    if report_type != "profit_and_loss":
+        raise RuntimeError("Por ahora solo está habilitado Profit & Loss.")
+
+    access_token, realm_id = get_valid_access_token()
+
+    report_json = get_profit_and_loss(
+        access_token=access_token,
+        realm_id=realm_id,
+        start_date=start_date,
+        end_date=end_date,
+        accounting_method="Accrual",
+        summarize_column_by="Total",
+        customer_id=client_id if client_id != "all" else None
+    )
+
+    rows = parse_pl_to_rows(report_json)
+
+    # Excluir cuentas seleccionadas (por nombre)
     if excluded_accounts:
-        demo_rows = [r for r in demo_rows if r["account"] not in excluded_accounts]
+        excluded_set = set(excluded_accounts)
+        rows = [r for r in rows if r["account"] not in excluded_set]
+
     return {
         "meta": {
             "report_type": report_type,
@@ -58,8 +73,9 @@ def fetch_qbo_report(report_type: str, start_date: str, end_date: str, client_id
             "client_id": client_id,
             "excluded_accounts": excluded_accounts,
         },
-        "rows": demo_rows
+        "rows": rows
     }
+
 
 @app.get("/")
 def home():
