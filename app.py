@@ -234,24 +234,14 @@ def callback():
 def reports():
     try:
         access_token, realm_id = get_valid_access_token()
-
         clients = [{"id": "all", "name": "Todos los clientes"}] + get_customers(access_token, realm_id)
         accounts = get_accounts(access_token, realm_id)
 
-        return render_template(
-            "reports.html",
-            clients=clients,
-            accounts=accounts,
-            report_types=REPORT_TYPES
-        )
+        return render_template("reports.html", clients=clients, accounts=accounts, report_types=REPORT_TYPES)
     except Exception as e:
         flash(f"QuickBooks no conectado o error: {e}. Ve a /connect.")
-        return render_template(
-            "reports.html",
-            clients=[{"id": "all", "name": "Todos los clientes"}],
-            accounts=[],
-            report_types=REPORT_TYPES
-        )
+        return render_template("reports.html", clients=[{"id":"all","name":"Todos los clientes"}], accounts=[], report_types=REPORT_TYPES)
+
 
 
 @app.post("/run-report")
