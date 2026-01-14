@@ -1,11 +1,14 @@
 import os
 import secrets
 import base64
+import io
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 import requests
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash,send_file
 
 from token_store import init_db, save_tokens
 from qbo_client import (
@@ -207,4 +210,181 @@ def run_report():
     excluded_accounts = request.form.getlist("excluded_accounts")
 
     data = fetch_qbo_report(report_type, start_date, end_date, client_id, excluded_accounts)
+
+        # 🔐 Guardamos los parámetros para descargar "tal cual QuickBooks"
+    session["last_report_meta"] = {
+        "report_type": report_type,
+        "start_date": start_date,
+        "end_date": end_date,
+        "client_id": client_id,
+        "accounting_method": "Accrual",
+        "summarize_column_by": "Total",
+    }
+
     return render_template("results.html", data=data)
+
+@app.get("/download/qbo/pl.xlsx")
+@login_required
+def download_qbo_pl_xlsx():
+    meta = session.get("last_report_meta")
+    if not meta:
+        flash("No hay parámetros del reporte. Genera uno primero.")
+        return redirect(url_for("reports"))
+
+    access_token, realm_id = get_valid_access_token()
+
+    report_json = get_profit_and_loss(
+        access_token=access_token,
+        realm_id=realm_id,
+        start_date=meta["start_date"],
+        end_date=meta["end_date"],
+        accounting_method=meta.get("accounting_method", "Accrual"),
+        summarize_column_by=meta.get("summarize_column_by", "Total"),
+        customer_id=None if meta.get("client_id") in (None, "", "all") else meta["client_id"],
+    )
+
+    # --- Construir Excel “tipo QuickBooks” desde Columns + Rows ---
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Profit and Loss"
+
+    header = report_json.get("Header", {})
+    columns = (report_json.get("Columns", {}) or {}).get("Column", []) or []
+    rows_root = report_json.get("Rows", {}) or {}
+
+    # Título
+    report_name = header.get("ReportName", "Profit and Loss")
+    ws["A1"] = report_name
+    ws["A1"].font = Font(bold=True, size=14)
+    ws["A2"] = f"Periodo: {header.get('StartPeriod', meta['start_date'])} a {header.get('EndPeriod', meta['end_date'])}"
+    ws["A2"].font = Font(size=11)
+
+    ws.append([])  # línea en blanco
+
+    # Encabezados de columnas (según metadata)
+    col_titles = []
+    col_types = []
+    for c in columns:
+        col_titles.append(c.get("ColTitle") or "")
+        col_types.append(c.get("ColType") or "")
+
+    if not col_titles:
+        # fallback común: Cuenta / Monto
+        col_titles = ["Cuenta", "Monto"]
+        col_types = ["Account", "Money"]
+
+    start_row = ws.max_row + 1
+    ws.append(col_titles)
+
+    for j in range(1, len(col_titles) + 1):
+        cell = ws.cell(row=start_row, column=j)
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="left")
+
+    money_cols = [i for i, t in enumerate(col_types, start=1) if t == "Money"]
+
+    def write_row(values, depth=0, bold=False):
+        r = ws.max_row + 1
+        ws.append(values)
+
+        # Indent en primera columna para simular jerarquía de QBO
+        first = ws.cell(row=r, column=1)
+        first.alignment = Alignment(indent=depth, horizontal="left")
+        if bold:
+            for j in range(1, len(values) + 1):
+                ws.cell(row=r, column=j).font = Font(bold=True)
+
+        # Formato monetario
+        for mc in money_cols:
+            cell = ws.cell(row=r, column=mc)
+            if isinstance(cell.value, (int, float)):
+                cell.number_format = '#,##0.00'
+
+    def safe_float(x):
+        if x is None:
+            return 0.0
+        if isinstance(x, (int, float)):
+            return float(x)
+        s = str(x).replace(",", "").strip()
+        if s in ("", "-"):
+            return 0.0
+        try:
+            return float(s)
+        except:
+            return 0.0
+
+    def walk_rows(node, depth=0):
+        """
+        Recorre Rows del reporte:
+        - Section: tiene Header + Rows + Summary
+        - Data: tiene ColData
+        """
+        if not node:
+            return
+
+        row_list = node.get("Row", [])
+        if not isinstance(row_list, list):
+            return
+
+        for item in row_list:
+            rtype = item.get("type")
+
+            # SECTION (grupo)
+            if rtype == "Section":
+                # header de sección
+                hdr = item.get("Header", {}).get("ColData", [])
+                hdr_vals = [h.get("value", "") for h in hdr] if hdr else []
+                if hdr_vals:
+                    write_row(hdr_vals, depth=depth, bold=True)
+
+                # subrows
+                walk_rows(item.get("Rows", {}), depth=depth + 1)
+
+                # summary (subtotal de sección)
+                summ = item.get("Summary", {}).get("ColData", [])
+                summ_vals = [s.get("value", "") for s in summ] if summ else []
+                if summ_vals:
+                    # convertir money cols a float cuando se pueda
+                    for idx in money_cols:
+                        if idx - 1 < len(summ_vals):
+                            summ_vals[idx - 1] = safe_float(summ_vals[idx - 1])
+                    write_row(summ_vals, depth=depth, bold=True)
+
+            # DATA (fila)
+            elif rtype == "Data":
+                coldata = item.get("ColData", [])
+                vals = [c.get("value", "") for c in coldata] if coldata else []
+                # convertir money cols a float
+                for idx in money_cols:
+                    if idx - 1 < len(vals):
+                        vals[idx - 1] = safe_float(vals[idx - 1])
+                write_row(vals, depth=depth, bold=False)
+
+            else:
+                # fallback: intentar recorrer si trae Rows
+                if "Rows" in item:
+                    walk_rows(item["Rows"], depth=depth)
+
+    walk_rows(rows_root, depth=0)
+
+    # Auto-ajustar anchos
+    for col in range(1, ws.max_column + 1):
+        max_len = 0
+        for cell in ws[get_column_letter(col)]:
+            val = "" if cell.value is None else str(cell.value)
+            if len(val) > max_len:
+                max_len = len(val)
+        ws.column_dimensions[get_column_letter(col)].width = min(max_len + 2, 60)
+
+    # Guardar en memoria y devolver
+    stream = io.BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+
+    filename = f"QBO_ProfitAndLoss_{meta['start_date']}_{meta['end_date']}.xlsx"
+    return send_file(
+        stream,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
