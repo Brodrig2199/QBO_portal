@@ -242,7 +242,6 @@ def download_qbo_report_xlsx():
             start_date=meta["start_date"],
             end_date=meta["end_date"],
             accounting_method=meta.get("accounting_method", "Accrual"),
-            summarize_column_by=meta.get("summarize_column_by", "Total"),
             customer_id=None if meta.get("client_id") in (None, "", "all") else meta["client_id"],
         )
         sheet_title = "P&L Detail"
