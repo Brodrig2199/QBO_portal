@@ -163,9 +163,15 @@
         </a>
 
         <!-- ✅ Este genera y descarga el INFORME 43 -->
-       {% if data.meta.report_type in ["vat_tax_detail", "profit_and_loss_detail"] %}
+       {% if data.meta.report_type == "profit_and_loss_detail" %}
   <a href="{{ url_for('download_informe43_xlsx') }}" class="btn btn-green">
     🧾 Descargar INFORME 43 (Excel)
+  </a>
+{% endif %}
+
+{% if data.meta.report_type == "vat_tax_detail" %}
+  <a href="{{ url_for('download_informe43_vat_xlsx') }}" class="btn btn-green">
+    🧾 Descargar INFORME 43 (VAT)
   </a>
 {% endif %}
 
