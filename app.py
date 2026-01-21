@@ -223,179 +223,67 @@ def run_report():
         return redirect(url_for("reports"))
 
 
-@app.get("/download/informe43.xlsx")
+@app.get("/download/qbo/report.xlsx")
 @login_required
-def download_informe43_xlsx():
+def download_qbo_report_xlsx():
     meta = session.get("last_report_meta")
     if not meta:
         flash("No hay parámetros del reporte. Genera uno primero.")
         return redirect(url_for("reports"))
 
-    # ✅ INFORME 43 ahora se basa en PROFIT & LOSS DETAIL
-    if meta.get("report_type") != "profit_and_loss_detail":
-        flash("Para el INFORME 43 primero genera el reporte de Pérdidas y Ganancias (Detalle).")
-        return redirect(url_for("reports"))
-
     access_token, realm_id = get_valid_access_token()
 
-    report_json = get_profit_and_loss_detail(
-        access_token=access_token,
-        realm_id=realm_id,
-        start_date=meta["start_date"],
-        end_date=meta["end_date"],
-        accounting_method="Accrual",
-        summarize_column_by="Total",
-        customer_id=None if meta.get("client_id") in (None, "", "all") else meta["client_id"],
-    )
+    # 🔹 Re-descargar el reporte original de QuickBooks (preview completo)
+    if meta["report_type"] == "profit_and_loss_detail":
+        report_json = get_profit_and_loss_detail(
+            access_token=access_token,
+            realm_id=realm_id,
+            start_date=meta["start_date"],
+            end_date=meta["end_date"],
+            accounting_method="Accrual",
+            summarize_column_by="Total",
+            customer_id=None if meta.get("client_id") in (None, "", "all") else meta["client_id"],
+        )
+        sheet_title = "Profit & Loss Detail"
+        filename = f"QBO_ProfitAndLossDetail_{meta['start_date']}_{meta['end_date']}.xlsx"
+
+    elif meta["report_type"] == "vat_tax_detail":
+        report_json = get_vat_tax_detail(
+            access_token=access_token,
+            realm_id=realm_id,
+            start_date=meta["start_date"],
+            end_date=meta["end_date"],
+        )
+        sheet_title = "VAT Tax Detail"
+        filename = f"QBO_TaxDetail_{meta['start_date']}_{meta['end_date']}.xlsx"
+
+    else:
+        flash("Tipo de reporte no soportado.")
+        return redirect(url_for("reports"))
 
     table = parse_report_to_table(report_json)
 
-    # -------------------------
-    # Helpers
-    # -------------------------
-    cols = [(c or "").lower() for c in (table.get("columns") or [])]
-
-    def find_col(*keys):
-        for k in keys:
-            for i, c in enumerate(cols):
-                if k in c:
-                    return i
-        return None
-
-    def cell(row, idx):
-        if idx is None:
-            return ""
-        return (row.get("cells")[idx] or "").strip()
-
-    def to_float(x):
-        try:
-            return float(str(x).replace(",", ""))
-        except:
-            return 0.0
-
-    def to_yyyymmdd(s):
-        for f in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y"):
-            try:
-                return datetime.strptime(s, f).strftime("%Y%m%d")
-            except:
-                pass
-        return ""
-
-    import re
-
-    def parse_vendor(name):
-        """
-        FORMATO REAL:
-        NOMBRE/TIPO/RUC/DV
-        Ej: BANCO GENERAL/2/280-134-61098/2
-        """
-        m = re.match(r'^\s*(.+?)\s*/\s*([123])\s*/\s*([^/]+)\s*/\s*([^/]+)\s*$', name or "")
-        if not m:
-            return ("", "", "", name.replace("/", " ").strip())
-
-        tipo_map = {"1": "N", "2": "J", "3": "E"}
-        return (
-            tipo_map.get(m.group(2), ""),
-            m.group(3).strip(),
-            m.group(4).strip(),
-            m.group(1).strip()
-        )
-
-    # -------------------------
-    # Map columnas P&L
-    # -------------------------
-    idx_nombre = find_col("nombre")
-    idx_no = find_col("n.", "no")
-    idx_fecha = find_col("fecha")
-    idx_importe = find_col("importe")
-
-    # -------------------------
-    # Construir filas
-    # -------------------------
-    rows_out = []
-
-    for r in table["rows"]:
-        if r["is_header"] or r["is_summary"]:
-            continue
-
-        nombre_raw = cell(r, idx_nombre)
-        if not nombre_raw:
-            continue
-
-        tipo, ruc, dv, nombre = parse_vendor(nombre_raw)
-
-        rows_out.append([
-            tipo,
-            ruc,
-            dv,
-            nombre,
-            cell(r, idx_no),
-            to_yyyymmdd(cell(r, idx_fecha)),
-            "",
-            "",
-            to_float(cell(r, idx_importe)),
-            ""
-        ])
-
-    # -------------------------
-    # Crear Excel INFORME 43
-    # -------------------------
+    # --- Crear Excel genérico (tal cual QuickBooks) ---
     from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.styles import Font, Alignment
     from openpyxl.utils import get_column_letter
+    import io
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "INFORME 43"
+    ws.title = sheet_title
 
-    headers = [
-        "TIPO DE PERSONA",
-        "RUC",
-        "DV",
-        "NOMBRE O RAZON SOCIAL",
-        "FACTURA",
-        "FECHA",
-        "CONCEPTO",
-        "COMPRAS DE BIENES Y SERVICIOS",
-        "MONTO EN BALBOAS",
-        "ITBMS PAGADO EN BALBOAS",
-    ]
+    # headers
+    ws.append(table["columns"])
+    for c in range(1, len(table["columns"]) + 1):
+        ws.cell(row=1, column=c).font = Font(bold=True)
 
-    bold = Font(bold=True)
-    fill = PatternFill("solid", fgColor="EFEFEF")
-    thin = Side(style="thin")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    # rows
+    for r in table["rows"]:
+        ws.append(r["cells"])
 
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
-    ws["A1"] = "INFORME 43 - FORMATO A DILIGENCIAR"
-    ws["A1"].font = Font(bold=True, size=13)
-
-    ws.append([])
-    ws.append([])
-
-    for i, h in enumerate(headers, start=1):
-        c = ws.cell(row=5, column=i, value=h)
-        c.font = bold
-        c.fill = fill
-        c.border = border
-        c.alignment = Alignment(horizontal="center", wrap_text=True)
-
-    r0 = 6
-    for r, row in enumerate(rows_out, start=r0):
-        for c, val in enumerate(row, start=1):
-            cellx = ws.cell(row=r, column=c, value=val)
-            cellx.border = border
-            cellx.alignment = Alignment(vertical="top")
-            if c in (2, 3):
-                cellx.number_format = '@'
-            if c == 9:
-                cellx.number_format = '#,##0.00'
-
-    widths = [16, 18, 6, 35, 14, 12, 18, 30, 18, 22]
-    for i, w in enumerate(widths, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = w
-
-    ws.freeze_panes = "A6"
+    for i in range(1, ws.max_column + 1):
+        ws.column_dimensions[get_column_letter(i)].width = 22
 
     stream = io.BytesIO()
     wb.save(stream)
@@ -404,6 +292,6 @@ def download_informe43_xlsx():
     return send_file(
         stream,
         as_attachment=True,
-        download_name=f"INFORME43_{meta['start_date']}_{meta['end_date']}.xlsx",
+        download_name=filename,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
