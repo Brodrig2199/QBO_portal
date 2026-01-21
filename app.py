@@ -364,3 +364,213 @@ def download_qbo_report_xlsx():
         download_name=filename,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+@app.get("/download/informe43.xlsx")
+@login_required
+def download_informe43_xlsx():
+    meta = session.get("last_report_meta")
+    if not meta:
+        flash("No hay parámetros del reporte. Genera uno primero.")
+        return redirect(url_for("reports"))
+
+    if meta.get("report_type") != "vat_tax_detail":
+        flash("Para el INFORME 43 primero genera el reporte: VAT - Detalle de Impuestos.")
+        return redirect(url_for("reports"))
+
+    access_token, realm_id = get_valid_access_token()
+
+    # Traer TaxDetail
+    report_json = get_vat_tax_detail(
+        access_token=access_token,
+        realm_id=realm_id,
+        start_date=meta["start_date"],
+        end_date=meta["end_date"],
+    )
+
+    table = parse_report_to_table(report_json)
+
+    # -------------------------
+    # Helpers: detectar columnas
+    # -------------------------
+    cols = [(c or "").strip().lower() for c in (table.get("columns") or [])]
+
+    def find_col(*keywords, default=None):
+        for k in keywords:
+            k = k.lower()
+            for i, c in enumerate(cols):
+                if k in c:
+                    return i
+        return default
+
+    def get_cell(row, idx):
+        cells = row.get("cells") or []
+        if idx is None or idx < 0 or idx >= len(cells):
+            return ""
+        return (cells[idx] or "").strip()
+
+    def to_float(x):
+        if x is None:
+            return 0.0
+        if isinstance(x, (int, float)):
+            return float(x)
+        s = str(x).replace(",", "").strip()
+        if s in ("", "-"):
+            return 0.0
+        try:
+            return float(s)
+        except:
+            return 0.0
+
+    def to_yyyymmdd(date_str: str) -> str:
+        s = (date_str or "").strip()
+        if not s:
+            return ""
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(s, fmt).strftime("%Y%m%d")
+            except:
+                pass
+        if len(s) == 8 and s.isdigit():
+            return s
+        return ""
+
+    def parse_vendor_encoded(name: str):
+        raw = (name or "").strip()
+        if not raw:
+            return ("", "", "", "")
+
+        parts = [p.strip() for p in raw.split("/") if p.strip() != ""]
+        tipo_num = parts[0] if len(parts) >= 1 else ""
+        ruc = parts[1] if len(parts) >= 2 else ""
+        dv = parts[2] if len(parts) >= 3 else ""
+
+        tipo_map = {"1": "N", "2": "J", "3": "E"}
+        tipo_persona = tipo_map.get(tipo_num, "")
+
+        nombre = " ".join(parts[3:]).strip() if len(parts) >= 4 else ""
+        if not nombre:
+            nombre = raw.replace("/", " ").strip()
+
+        return (tipo_persona, ruc, dv, nombre)
+
+    # -------------------------
+    # Mapeo columnas del reporte VAT
+    # -------------------------
+    idx_nombre  = find_col("nombre", "name", "vendor", "proveedor")
+    idx_no      = find_col("no", "nº", "numero", "number", "doc", "ref")
+    idx_fecha   = find_col("fecha", "date")
+    idx_importe = find_col("importe", "amount", "total")
+
+    # -------------------------
+    # Construir filas INFORME 43
+    # -------------------------
+    output_rows = []
+
+    for r in (table.get("rows") or []):
+        if r.get("is_header") or r.get("is_summary"):
+            continue
+
+        nombre_raw = get_cell(r, idx_nombre)
+        if not nombre_raw:
+            continue
+
+        tipo_persona, ruc, dv, nombre = parse_vendor_encoded(nombre_raw)
+
+        factura = get_cell(r, idx_no)
+        fecha_fmt = to_yyyymmdd(get_cell(r, idx_fecha))
+        importe = to_float(get_cell(r, idx_importe))
+
+        output_rows.append([
+            tipo_persona,   # TIPO DE PERSONA (N/J/E)
+            ruc,            # RUC
+            dv,             # DV
+            nombre,         # NOMBRE O RAZON SOCIAL
+            factura,        # FACTURA (No)
+            fecha_fmt,      # FECHA yyyymmdd
+            "",             # CONCEPTO (blanco)
+            "",             # COMPRAS DE BIENES Y SERVICIOS (blanco)
+            importe,        # MONTO EN BALBOAS (Importe)
+            "",             # ITBMS PAGADO EN BALBOAS (blanco)
+        ])
+
+    # -------------------------
+    # Crear Excel con formato template
+    # -------------------------
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "INFORME 43"
+
+    headers = [
+        "TIPO DE PERSONA",
+        "RUC",
+        "DV",
+        "NOMBRE O RAZON SOCIAL",
+        "FACTURA",
+        "FECHA",
+        "CONCEPTO",
+        "COMPRAS DE BIENES Y SERVICIOS",
+        "MONTO EN BALBOAS",
+        "ITBMS PAGADO EN BALBOAS",
+    ]
+
+    fill_grey = PatternFill("solid", fgColor="D9D9D9")
+    fill_header = PatternFill("solid", fgColor="EFEFEF")
+    bold = Font(bold=True)
+    thin = Side(style="thin", color="999999")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+    ws["A1"] = "INFORME 43 - FORMATO A DILIGENCIAR"
+    ws["A1"].font = Font(bold=True, size=13)
+    ws["A1"].alignment = Alignment(horizontal="left", vertical="center")
+    ws["A1"].fill = fill_grey
+
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(headers))
+    ws["A2"] = "Esta sección de encabezado no se debe modificar."
+    ws["A2"].alignment = Alignment(horizontal="left")
+    ws["A2"].font = Font(italic=True)
+
+    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=len(headers))
+    ws["A3"] = "Los datos de este informe deben ser registrados a partir de la línea 5 en adelante."
+    ws["A3"].alignment = Alignment(horizontal="left")
+    ws["A3"].font = Font(italic=True)
+
+    header_row = 5
+    for i, h in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=i, value=h)
+        cell.font = bold
+        cell.fill = fill_header
+        cell.border = border
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    start_data_row = 6
+    for r_i, rowvals in enumerate(output_rows, start=start_data_row):
+        for c_i, val in enumerate(rowvals, start=1):
+            cell = ws.cell(row=r_i, column=c_i, value=val)
+            cell.border = border
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+            # ✅ Solo MONTO EN BALBOAS (col 9) lleva formato moneda
+            if c_i == 9 and isinstance(val, (int, float)):
+                cell.number_format = '#,##0.00'
+
+    widths = [16, 14, 6, 32, 14, 12, 18, 26, 16, 20]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    ws.freeze_panes = "A6"
+
+    stream = io.BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+
+    filename = f"INFORME43_{meta['start_date']}_{meta['end_date']}.xlsx"
+    return send_file(
+        stream,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
