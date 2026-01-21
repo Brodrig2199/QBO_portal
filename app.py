@@ -241,7 +241,6 @@ def download_qbo_report_xlsx():
             start_date=meta["start_date"],
             end_date=meta["end_date"],
             accounting_method="Accrual",
-            summarize_column_by="Total",
             customer_id=None if meta.get("client_id") in (None, "", "all") else meta["client_id"],
         )
         sheet_title = "Profit & Loss Detail"
@@ -316,7 +315,6 @@ def download_informe43_xlsx():
         start_date=meta["start_date"],
         end_date=meta["end_date"],
         accounting_method="Accrual",
-        summarize_column_by="Total",
         customer_id=None if meta.get("client_id") in (None, "", "all") else meta["client_id"],
     )
 
@@ -363,7 +361,6 @@ def download_informe43_xlsx():
         """
         FORMATO REAL:
         NOMBRE/TIPO/RUC/DV
-        Ej: BANCO GENERAL/2/280-134-61098/2
         """
         m = re.match(r'^\s*(.+?)\s*/\s*([123])\s*/\s*([^/]+)\s*/\s*([^/]+)\s*$', name or "")
         if not m:
