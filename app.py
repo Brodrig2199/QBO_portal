@@ -223,147 +223,6 @@ def run_report():
         return redirect(url_for("reports"))
 
 
-@app.get("/download/qbo/report.xlsx")
-@login_required
-def download_qbo_report_xlsx():
-    meta = session.get("last_report_meta")
-    if not meta:
-        flash("No hay parámetros del reporte. Genera uno primero.")
-        return redirect(url_for("reports"))
-
-    access_token, realm_id = get_valid_access_token()
-
-    # Volvemos a traer el reporte (para descargar siempre lo más actualizado)
-    rt = meta.get("report_type")
-    if rt == "profit_and_loss_detail":
-        report_json = get_profit_and_loss_detail(
-            access_token=access_token,
-            realm_id=realm_id,
-            start_date=meta["start_date"],
-            end_date=meta["end_date"],
-            accounting_method=meta.get("accounting_method", "Accrual"),
-            customer_id=None if meta.get("client_id") in (None, "", "all") else meta["client_id"],
-        )
-        sheet_title = "P&L Detail"
-        filename = f"QBO_ProfitAndLossDetail_{meta['start_date']}_{meta['end_date']}.xlsx"
-
-    elif rt == "vat_tax_detail":
-        report_json = get_vat_tax_detail(
-            access_token=access_token,
-            realm_id=realm_id,
-            start_date=meta["start_date"],
-            end_date=meta["end_date"],
-        )
-        sheet_title = "VAT Tax Detail"
-        filename = f"QBO_TaxDetail_{meta['start_date']}_{meta['end_date']}.xlsx"
-
-    else:
-        flash("Reporte inválido en sesión.")
-        return redirect(url_for("reports"))
-
-    # Convertimos a tabla genérica
-    table = parse_report_to_table(report_json)
-
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment
-    from openpyxl.utils import get_column_letter
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = sheet_title
-
-    header = report_json.get("Header", {}) or {}
-    report_name = header.get("ReportName") or meta.get("qbo_report_name") or "QuickBooks Report"
-
-    # Título
-    ws["A1"] = report_name
-    ws["A1"].font = Font(bold=True, size=14)
-    ws["A2"] = f"Periodo: {header.get('StartPeriod', meta['start_date'])} a {header.get('EndPeriod', meta['end_date'])}"
-    ws["A2"].font = Font(size=11)
-    ws.append([])
-
-    # Encabezados
-    col_titles = table["columns"] if table["columns"] else ["Column"]
-    col_types = table.get("col_types", []) or [""] * len(col_titles)
-
-    start_row = ws.max_row + 1
-    ws.append(col_titles)
-    for j in range(1, len(col_titles) + 1):
-        c = ws.cell(row=start_row, column=j)
-        c.font = Font(bold=True)
-        c.alignment = Alignment(horizontal="left")
-
-    # Money cols
-    money_cols = [i for i, t in enumerate(col_types, start=1) if (t or "").lower() == "money"]
-
-    def safe_float(x):
-        if x is None:
-            return 0.0
-        if isinstance(x, (int, float)):
-            return float(x)
-        s = str(x).replace(",", "").strip()
-        if s in ("", "-"):
-            return 0.0
-        try:
-            return float(s)
-        except:
-            return 0.0
-
-    def write_row(cells, level=0, bold=False):
-        # asegurar longitud exacta
-        vals = list(cells) + [""] * (len(col_titles) - len(cells))
-        vals = vals[:len(col_titles)]
-
-        r = ws.max_row + 1
-        ws.append(vals)
-
-        # indent primera columna
-        ws.cell(row=r, column=1).alignment = Alignment(indent=level, horizontal="left")
-
-        if bold:
-            for j in range(1, len(col_titles) + 1):
-                ws.cell(row=r, column=j).font = Font(bold=True)
-
-        # money formatting
-        for mc in money_cols:
-            cell = ws.cell(row=r, column=mc)
-            if isinstance(cell.value, (int, float)):
-                cell.number_format = '#,##0.00'
-
-    # escribir data del reporte “tal cual” (Header/Data/Summary con indent)
-    for row in table["rows"]:
-        vals = list(row["cells"])
-
-        # convertir money cols a float
-        for idx in money_cols:
-            if idx - 1 < len(vals):
-                vals[idx - 1] = safe_float(vals[idx - 1])
-
-        write_row(
-            vals,
-            level=int(row.get("level", 0)),
-            bold=bool(row.get("is_header")) or bool(row.get("is_summary"))
-        )
-
-    # Auto width
-    for col in range(1, ws.max_column + 1):
-        max_len = 0
-        for cell in ws[get_column_letter(col)]:
-            val = "" if cell.value is None else str(cell.value)
-            if len(val) > max_len:
-                max_len = len(val)
-        ws.column_dimensions[get_column_letter(col)].width = min(max_len + 2, 60)
-
-    stream = io.BytesIO()
-    wb.save(stream)
-    stream.seek(0)
-
-    return send_file(
-        stream,
-        as_attachment=True,
-        download_name=filename,
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
 @app.get("/download/informe43.xlsx")
 @login_required
 def download_informe43_xlsx():
@@ -372,145 +231,114 @@ def download_informe43_xlsx():
         flash("No hay parámetros del reporte. Genera uno primero.")
         return redirect(url_for("reports"))
 
+    # ✅ INFORME 43 ahora se basa en PROFIT & LOSS DETAIL
+    if meta.get("report_type") != "profit_and_loss_detail":
+        flash("Para el INFORME 43 primero genera el reporte de Pérdidas y Ganancias (Detalle).")
+        return redirect(url_for("reports"))
+
     access_token, realm_id = get_valid_access_token()
 
-    rt = meta.get("report_type")
-
-    # ✅ Traer el reporte según lo que generaste
-    if rt == "profit_and_loss_detail":
-        report_json = get_profit_and_loss_detail(
-            access_token=access_token,
-            realm_id=realm_id,
-            start_date=meta["start_date"],
-            end_date=meta["end_date"],
-            accounting_method=meta.get("accounting_method", "Accrual"),
-            customer_id=None if meta.get("client_id") in (None, "", "all") else meta["client_id"],
-        )
-    elif rt == "vat_tax_detail":
-        report_json = get_vat_tax_detail(
-            access_token=access_token,
-            realm_id=realm_id,
-            start_date=meta["start_date"],
-            end_date=meta["end_date"],
-        )
-    else:
-        flash("El INFORME 43 solo aplica para Profit & Loss Detail o VAT Tax Detail.")
-        return redirect(url_for("reports"))
+    report_json = get_profit_and_loss_detail(
+        access_token=access_token,
+        realm_id=realm_id,
+        start_date=meta["start_date"],
+        end_date=meta["end_date"],
+        accounting_method="Accrual",
+        summarize_column_by="Total",
+        customer_id=None if meta.get("client_id") in (None, "", "all") else meta["client_id"],
+    )
 
     table = parse_report_to_table(report_json)
 
     # -------------------------
-    # Helpers (dentro de la función)
+    # Helpers
     # -------------------------
-    cols = [(c or "").strip().lower() for c in (table.get("columns") or [])]
+    cols = [(c or "").lower() for c in (table.get("columns") or [])]
 
-    def find_col(*keywords, default=None):
-        for k in keywords:
-            k = k.lower()
+    def find_col(*keys):
+        for k in keys:
             for i, c in enumerate(cols):
                 if k in c:
                     return i
-        return default
+        return None
 
-    def get_cell(row, idx):
-        cells = row.get("cells") or []
-        if idx is None or idx < 0 or idx >= len(cells):
+    def cell(row, idx):
+        if idx is None:
             return ""
-        return (cells[idx] or "").strip()
+        return (row.get("cells")[idx] or "").strip()
 
     def to_float(x):
-        if x is None:
-            return 0.0
-        if isinstance(x, (int, float)):
-            return float(x)
-        s = str(x).replace(",", "").strip()
-        if s in ("", "-"):
-            return 0.0
         try:
-            return float(s)
+            return float(str(x).replace(",", ""))
         except:
             return 0.0
 
-    def to_yyyymmdd(date_str: str) -> str:
-        s = (date_str or "").strip()
-        if not s:
-            return ""
-        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d"):
+    def to_yyyymmdd(s):
+        for f in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y"):
             try:
-                return datetime.strptime(s, fmt).strftime("%Y%m%d")
+                return datetime.strptime(s, f).strftime("%Y%m%d")
             except:
                 pass
-        if len(s) == 8 and s.isdigit():
-            return s
         return ""
 
-    def parse_vendor_encoded(name: str):
-        raw = (name or "").strip()
-        if not raw:
-            return ("", "", "", "")
+    import re
 
-        parts = [p.strip() for p in raw.split("/") if p.strip() != ""]
-        tipo_num = parts[0] if len(parts) >= 1 else ""
-        ruc = parts[1] if len(parts) >= 2 else ""
-        dv = parts[2] if len(parts) >= 3 else ""
+    def parse_vendor(name):
+        """
+        FORMATO REAL:
+        NOMBRE/TIPO/RUC/DV
+        Ej: BANCO GENERAL/2/280-134-61098/2
+        """
+        m = re.match(r'^\s*(.+?)\s*/\s*([123])\s*/\s*([^/]+)\s*/\s*([^/]+)\s*$', name or "")
+        if not m:
+            return ("", "", "", name.replace("/", " ").strip())
 
         tipo_map = {"1": "N", "2": "J", "3": "E"}
-        tipo_persona = tipo_map.get(tipo_num, "")
-
-        nombre = " ".join(parts[3:]).strip() if len(parts) >= 4 else ""
-        if not nombre:
-            nombre = raw.replace("/", " ").strip()
-
-        return (tipo_persona, ruc, dv, nombre)
+        return (
+            tipo_map.get(m.group(2), ""),
+            m.group(3).strip(),
+            m.group(4).strip(),
+            m.group(1).strip()
+        )
 
     # -------------------------
-    # ✅ Mapeo para P&L (según tu preview)
-    # Nombre: columna "Nombre"
-    # Factura: columna "N.º"
-    # Fecha: columna "Fecha"
-    # Importe: columna "Importe"
+    # Map columnas P&L
     # -------------------------
-    idx_nombre  = find_col("nombre", "name")
-    idx_no      = find_col("n.º", "n.", "no", "numero", "number", default=None)
-    idx_fecha   = find_col("fecha", "date")
-    idx_importe = find_col("importe", "amount", default=None)
+    idx_nombre = find_col("nombre")
+    idx_no = find_col("n.", "no")
+    idx_fecha = find_col("fecha")
+    idx_importe = find_col("importe")
 
-    output_rows = []
-    for r in (table.get("rows") or []):
-        if r.get("is_header") or r.get("is_summary"):
+    # -------------------------
+    # Construir filas
+    # -------------------------
+    rows_out = []
+
+    for r in table["rows"]:
+        if r["is_header"] or r["is_summary"]:
             continue
 
-        nombre_raw = get_cell(r, idx_nombre)
+        nombre_raw = cell(r, idx_nombre)
         if not nombre_raw:
             continue
 
-        tipo_persona, ruc, dv, nombre = parse_vendor_encoded(nombre_raw)
+        tipo, ruc, dv, nombre = parse_vendor(nombre_raw)
 
-        factura = get_cell(r, idx_no)
-        fecha_fmt = to_yyyymmdd(get_cell(r, idx_fecha))
-
-        # Importe puede venir vacío en filas de totales; solo tomamos si es Data real
-        importe = to_float(get_cell(r, idx_importe))
-
-        # Si no hay fecha ni número, probablemente no es una transacción real
-        if not fecha_fmt and not factura:
-            continue
-
-        output_rows.append([
-            tipo_persona,   # TIPO DE PERSONA
-            ruc,            # RUC
-            dv,             # DV
-            nombre,         # NOMBRE O RAZON SOCIAL
-            factura,        # FACTURA
-            fecha_fmt,      # FECHA yyyymmdd
-            "",             # CONCEPTO (blanco)
-            "",             # COMPRAS (blanco)
-            importe,        # MONTO EN BALBOAS
-            "",             # ITBMS (blanco)
+        rows_out.append([
+            tipo,
+            ruc,
+            dv,
+            nombre,
+            cell(r, idx_no),
+            to_yyyymmdd(cell(r, idx_fecha)),
+            "",
+            "",
+            to_float(cell(r, idx_importe)),
+            ""
         ])
 
     # -------------------------
-    # Excel template INFORME 43
+    # Crear Excel INFORME 43
     # -------------------------
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -533,46 +361,37 @@ def download_informe43_xlsx():
         "ITBMS PAGADO EN BALBOAS",
     ]
 
-    fill_grey = PatternFill("solid", fgColor="D9D9D9")
-    fill_header = PatternFill("solid", fgColor="EFEFEF")
     bold = Font(bold=True)
-    thin = Side(style="thin", color="999999")
+    fill = PatternFill("solid", fgColor="EFEFEF")
+    thin = Side(style="thin")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
     ws["A1"] = "INFORME 43 - FORMATO A DILIGENCIAR"
     ws["A1"].font = Font(bold=True, size=13)
-    ws["A1"].alignment = Alignment(horizontal="left", vertical="center")
-    ws["A1"].fill = fill_grey
 
-    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(headers))
-    ws["A2"] = "Esta sección de encabezado no se debe modificar."
-    ws["A2"].alignment = Alignment(horizontal="left")
-    ws["A2"].font = Font(italic=True)
+    ws.append([])
+    ws.append([])
 
-    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=len(headers))
-    ws["A3"] = "Los datos de este informe deben ser registrados a partir de la línea 5 en adelante."
-    ws["A3"].alignment = Alignment(horizontal="left")
-    ws["A3"].font = Font(italic=True)
-
-    header_row = 5
     for i, h in enumerate(headers, start=1):
-        cell = ws.cell(row=header_row, column=i, value=h)
-        cell.font = bold
-        cell.fill = fill_header
-        cell.border = border
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c = ws.cell(row=5, column=i, value=h)
+        c.font = bold
+        c.fill = fill
+        c.border = border
+        c.alignment = Alignment(horizontal="center", wrap_text=True)
 
-    start_data_row = 6
-    for r_i, rowvals in enumerate(output_rows, start=start_data_row):
-        for c_i, val in enumerate(rowvals, start=1):
-            cell = ws.cell(row=r_i, column=c_i, value=val)
-            cell.border = border
-            cell.alignment = Alignment(vertical="top", wrap_text=True)
-            if c_i == 9 and isinstance(val, (int, float)):
-                cell.number_format = '#,##0.00'
+    r0 = 6
+    for r, row in enumerate(rows_out, start=r0):
+        for c, val in enumerate(row, start=1):
+            cellx = ws.cell(row=r, column=c, value=val)
+            cellx.border = border
+            cellx.alignment = Alignment(vertical="top")
+            if c in (2, 3):
+                cellx.number_format = '@'
+            if c == 9:
+                cellx.number_format = '#,##0.00'
 
-    widths = [16, 14, 6, 32, 14, 12, 18, 26, 16, 20]
+    widths = [16, 18, 6, 35, 14, 12, 18, 30, 18, 22]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -582,10 +401,9 @@ def download_informe43_xlsx():
     wb.save(stream)
     stream.seek(0)
 
-    filename = f"INFORME43_{meta['start_date']}_{meta['end_date']}.xlsx"
     return send_file(
         stream,
         as_attachment=True,
-        download_name=filename,
+        download_name=f"INFORME43_{meta['start_date']}_{meta['end_date']}.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
