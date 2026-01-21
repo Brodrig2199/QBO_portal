@@ -50,9 +50,6 @@ def parse_date(date_str: str) -> str:
 
 
 def fetch_qbo_report(report_type: str, start_date: str, end_date: str, client_id: str, excluded_accounts: list[str]):
-    """
-    Devuelve data lista para mostrar + guardar meta para download.
-    """
     access_token, realm_id = get_valid_access_token()
 
     if report_type == "profit_and_loss_detail":
@@ -65,62 +62,24 @@ def fetch_qbo_report(report_type: str, start_date: str, end_date: str, client_id
             summarize_column_by="Total",
             customer_id=None if client_id == "all" else client_id
         )
-
         table = parse_report_to_table(report_json)
 
-        # Excluir “cuentas” por nombre: se aplica a la primera columna (normalmente es Account/Name)
-        if excluded_accounts:
-            excluded_set = set(excluded_accounts)
-            filtered = []
-            for r in table["rows"]:
-                name = (r["cells"][0] or "").strip() if r["cells"] else ""
-                # Solo filtramos rows tipo Data (no headers/summary) para no romper subtotales
-                if (not r["is_header"]) and (not r["is_summary"]) and name in excluded_set:
-                    continue
-                filtered.append(r)
-            table["rows"] = filtered
+        return {"meta": {"report_type": report_type, "qbo_report_name": "ProfitAndLossDetail",
+                         "start_date": start_date, "end_date": end_date, "client_id": client_id,
+                         "accounting_method": "Accrual", "summarize_column_by": "Total",
+                         "excluded_accounts": excluded_accounts},
+                "table": table, "raw": report_json}
 
-        return {
-            "meta": {
-                "report_type": report_type,
-                "qbo_report_name": "ProfitAndLossDetail",
-                "start_date": start_date,
-                "end_date": end_date,
-                "client_id": client_id,
-                "accounting_method": "Accrual",
-                "summarize_column_by": "Total",
-                "excluded_accounts": excluded_accounts,
-            },
-            "table": table,
-            "raw": report_json
-        }
-
-    elif report_type == "vat_tax_detail":
-        # Nota: normalmente NO filtra por customer en TaxDetail
-        report_json = get_vat_tax_detail(
-            access_token=access_token,
-            realm_id=realm_id,
-            start_date=start_date,
-            end_date=end_date
-        )
-
+    if report_type == "vat_tax_detail":
+        report_json = get_vat_tax_detail(access_token, realm_id, start_date, end_date)
         table = parse_report_to_table(report_json)
 
-        return {
-            "meta": {
-                "report_type": report_type,
-                "qbo_report_name": "TaxDetail",
-                "start_date": start_date,
-                "end_date": end_date,
-                "client_id": client_id,  # lo guardo por consistencia aunque no se use
-                "excluded_accounts": excluded_accounts,
-            },
-            "table": table,
-            "raw": report_json
-        }
+        return {"meta": {"report_type": report_type, "qbo_report_name": "TaxDetail",
+                         "start_date": start_date, "end_date": end_date, "client_id": client_id,
+                         "excluded_accounts": excluded_accounts},
+                "table": table, "raw": report_json}
 
-    else:
-        raise RuntimeError("Tipo de reporte inválido.")
+    raise RuntimeError(f"Tipo de reporte inválido: {report_type}")
 
 
 @app.get("/")
@@ -243,18 +202,26 @@ def reports():
 @app.post("/run-report")
 @login_required
 def run_report():
-    report_type = request.form.get("report_type", "")
-    start_date = parse_date(request.form.get("start_date", ""))
-    end_date = parse_date(request.form.get("end_date", ""))
-    client_id = request.form.get("client_id", "all")
-    excluded_accounts = request.form.getlist("excluded_accounts")
+    try:
+        report_type = request.form.get("report_type", "")
+        start_date = parse_date(request.form.get("start_date", ""))
+        end_date = parse_date(request.form.get("end_date", ""))
+        client_id = request.form.get("client_id", "all")
+        excluded_accounts = request.form.getlist("excluded_accounts")
 
-    data = fetch_qbo_report(report_type, start_date, end_date, client_id, excluded_accounts)
+        print("RUN REPORT -> report_type:", report_type, "start:", start_date, "end:", end_date, "client:", client_id)
 
-    # 🔐 Guardamos los parámetros para descargar “tal cual QuickBooks”
-    session["last_report_meta"] = data["meta"]
+        data = fetch_qbo_report(report_type, start_date, end_date, client_id, excluded_accounts)
 
-    return render_template("results.html", data=data)
+        # Guardar meta para download
+        session["last_report_meta"] = data["meta"]
+
+        return render_template("results.html", data=data)
+
+    except Exception as e:
+        print("RUN REPORT ERROR ->", repr(e))
+        flash(f"Error generando reporte: {e}")
+        return redirect(url_for("reports"))
 
 
 @app.get("/download/qbo/report.xlsx")
