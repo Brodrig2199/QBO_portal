@@ -131,6 +131,8 @@ def get_report(access_token: str, realm_id: str, report_name: str, **params) -> 
     Llama Reports API genérico:
       /v3/company/{realm_id}/reports/{report_name}
     """
+    print("QBO DEBUG -> ENV:", QBO_ENV, "BASE:", _api_base(), "realm:", realm_id, "report:", report_name, "params:", params)
+
     url = f"{_api_base()}/v3/company/{realm_id}/reports/{report_name}"
 
     # minorversion siempre
