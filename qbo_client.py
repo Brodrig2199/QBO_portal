@@ -159,7 +159,6 @@ def get_profit_and_loss_detail(
         "end_date": end_date,
         "accounting_method": accounting_method,
     }
-
     if customer_id and customer_id != "all":
         params["customer"] = customer_id
 
@@ -175,6 +174,7 @@ def get_vat_tax_detail(
     end_date: str,
 ) -> dict:
     return get_report(access_token, realm_id, "TaxDetail", start_date=start_date, end_date=end_date)
+
 
 
 # -------------------------

@@ -65,7 +65,7 @@ def fetch_qbo_report(report_type: str, start_date: str, end_date: str, client_id
 
         return {"meta": {"report_type": report_type, "qbo_report_name": "ProfitAndLossDetail",
                          "start_date": start_date, "end_date": end_date, "client_id": client_id,
-                         "accounting_method": "Accrual", "summarize_column_by": "Total",
+                         "accounting_method": "Accrual",
                          "excluded_accounts": excluded_accounts},
                 "table": table, "raw": report_json}
 
