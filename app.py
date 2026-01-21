@@ -474,8 +474,9 @@ def download_informe43_xlsx():
         for c, val in enumerate(row, start=1):
             cellx = ws.cell(row=r, column=c, value=val)
             cellx.border = border
-            if c == 9:
-                cellx.number_format = '#,##0.00'
+            if c in (9, 10):
+             cellx.number_format = '#,##0.00'
+
             if c in (2, 3):
                 cellx.number_format = '@'
 
@@ -493,5 +494,196 @@ def download_informe43_xlsx():
         stream,
         as_attachment=True,
         download_name=f"INFORME43_{meta['start_date']}_{meta['end_date']}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+@app.get("/download/informe43_vat.xlsx")
+@login_required
+def download_informe43_vat_xlsx():
+    meta = session.get("last_report_meta")
+    if not meta:
+        flash("No hay parámetros del reporte. Genera uno primero.")
+        return redirect(url_for("reports"))
+
+    if meta.get("report_type") != "vat_tax_detail":
+        flash("Para este INFORME 43 (VAT) primero genera el reporte: VAT - Detalle de Impuestos.")
+        return redirect(url_for("reports"))
+
+    access_token, realm_id = get_valid_access_token()
+
+    report_json = get_vat_tax_detail(
+        access_token=access_token,
+        realm_id=realm_id,
+        start_date=meta["start_date"],
+        end_date=meta["end_date"],
+    )
+
+    table = parse_report_to_table(report_json)
+
+    # -------------------------
+    # Helpers
+    # -------------------------
+    import re, io
+    from datetime import datetime
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    cols = [(c or "").lower() for c in table.get("columns", [])]
+
+    def find_col(*keys):
+        for k in keys:
+            for i, c in enumerate(cols):
+                if k in c:
+                    return i
+        return None
+
+    def cell(row, idx):
+        if idx is None:
+            return ""
+        return (row["cells"][idx] or "").strip()
+
+    def to_float(x):
+        try:
+            return float(str(x).replace(",", ""))
+        except:
+            return 0.0
+
+    def to_yyyymmdd(s):
+        for f in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(s, f).strftime("%Y%m%d")
+            except:
+                pass
+        return ""
+
+    def parse_vendor(name):
+        raw = (name or "").strip()
+        if not raw:
+            return ("", "", "", "")
+
+        tipo_map = {"1": "N", "2": "J", "3": "E"}
+
+        m = re.match(r'^\s*(.+?)\s*/\s*([123])\s*/\s*([^/]+)\s*/\s*([^/]+)\s*$', raw)
+        if m:
+            return (
+                tipo_map.get(m.group(2).strip(), ""),
+                m.group(3).strip(),
+                m.group(4).strip(),
+                m.group(1).strip()
+            )
+
+        m2 = re.match(r'^\s*(.+?)\s*/\s*([123])\s*$', raw)
+        if m2:
+            return (
+                tipo_map.get(m2.group(2).strip(), ""),
+                "",
+                "",
+                m2.group(1).strip()
+            )
+
+        return ("", "", "", raw.replace("/", " ").strip())
+
+    # -------------------------
+    # Map columnas VAT (ajusta si tu TaxDetail tiene otros nombres)
+    # -------------------------
+    idx_nombre  = find_col("nombre", "name", "vendor", "proveedor")
+    idx_no      = find_col("n.", "no", "nº", "numero", "number", "doc")
+    idx_fecha   = find_col("fecha", "date")
+    idx_monto   = find_col("importe", "amount", "total", "monto")
+    idx_itbms   = find_col("itbms", "tax", "impuesto", "vat")
+
+    # -------------------------
+    # Construir filas INFORME 43
+    # -------------------------
+    rows_out = []
+
+    for r in table["rows"]:
+        if r["is_header"] or r["is_summary"]:
+            continue
+
+        nombre_raw = cell(r, idx_nombre)
+        if not nombre_raw:
+            continue
+
+        tipo, ruc, dv, nombre = parse_vendor(nombre_raw)
+
+        monto = to_float(cell(r, idx_monto))
+        itbms = to_float(cell(r, idx_itbms)) if idx_itbms is not None else 0.0
+
+        rows_out.append([
+            tipo,
+            ruc,
+            dv,
+            nombre,
+            cell(r, idx_no),
+            to_yyyymmdd(cell(r, idx_fecha)),
+            "",
+            "",
+            monto,
+            itbms if itbms != 0 else 0.0
+        ])
+
+    # -------------------------
+    # Crear Excel (mismo formato)
+    # -------------------------
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "INFORME 43 (VAT)"
+
+    headers = [
+        "TIPO DE PERSONA",
+        "RUC",
+        "DV",
+        "NOMBRE O RAZON SOCIAL",
+        "FACTURA",
+        "FECHA",
+        "CONCEPTO",
+        "COMPRAS DE BIENES Y SERVICIOS",
+        "MONTO EN BALBOAS",
+        "ITBMS PAGADO EN BALBOAS",
+    ]
+
+    bold = Font(bold=True)
+    fill = PatternFill("solid", fgColor="EFEFEF")
+    thin = Side(style="thin")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+    ws["A1"] = "INFORME 43 - FORMATO A DILIGENCIAR (VAT)"
+    ws["A1"].font = Font(bold=True, size=13)
+
+    ws.append([])
+    ws.append([])
+
+    for i, h in enumerate(headers, start=1):
+        c = ws.cell(row=5, column=i, value=h)
+        c.font = bold
+        c.fill = fill
+        c.border = border
+        c.alignment = Alignment(horizontal="center", wrap_text=True)
+
+    for rr, row in enumerate(rows_out, start=6):
+        for cc, val in enumerate(row, start=1):
+            cellx = ws.cell(row=rr, column=cc, value=val)
+            cellx.border = border
+            if cc in (2, 3):
+                cellx.number_format = '@'
+            if cc in (9, 10):
+                cellx.number_format = '#,##0.00'
+
+    widths = [16, 18, 6, 35, 14, 12, 18, 30, 18, 22]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    ws.freeze_panes = "A6"
+
+    stream = io.BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+
+    return send_file(
+        stream,
+        as_attachment=True,
+        download_name=f"INFORME43_VAT_{meta['start_date']}_{meta['end_date']}.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
