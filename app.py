@@ -134,6 +134,7 @@ def connect():
 
 @app.get("/callback")
 def callback():
+    print("CALLBACK HIT:", dict(request.args))
     code = request.args.get("code")
     realm_id = request.args.get("realmId")
     state = request.args.get("state")
