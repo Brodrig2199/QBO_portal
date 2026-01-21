@@ -372,24 +372,35 @@ def download_informe43_xlsx():
         flash("No hay parámetros del reporte. Genera uno primero.")
         return redirect(url_for("reports"))
 
-    if meta.get("report_type") != "vat_tax_detail":
-        flash("Para el INFORME 43 primero genera el reporte: VAT - Detalle de Impuestos.")
-        return redirect(url_for("reports"))
-
     access_token, realm_id = get_valid_access_token()
 
-    # Traer TaxDetail
-    report_json = get_vat_tax_detail(
-        access_token=access_token,
-        realm_id=realm_id,
-        start_date=meta["start_date"],
-        end_date=meta["end_date"],
-    )
+    rt = meta.get("report_type")
+
+    # ✅ Traer el reporte según lo que generaste
+    if rt == "profit_and_loss_detail":
+        report_json = get_profit_and_loss_detail(
+            access_token=access_token,
+            realm_id=realm_id,
+            start_date=meta["start_date"],
+            end_date=meta["end_date"],
+            accounting_method=meta.get("accounting_method", "Accrual"),
+            customer_id=None if meta.get("client_id") in (None, "", "all") else meta["client_id"],
+        )
+    elif rt == "vat_tax_detail":
+        report_json = get_vat_tax_detail(
+            access_token=access_token,
+            realm_id=realm_id,
+            start_date=meta["start_date"],
+            end_date=meta["end_date"],
+        )
+    else:
+        flash("El INFORME 43 solo aplica para Profit & Loss Detail o VAT Tax Detail.")
+        return redirect(url_for("reports"))
 
     table = parse_report_to_table(report_json)
 
     # -------------------------
-    # Helpers: detectar columnas
+    # Helpers (dentro de la función)
     # -------------------------
     cols = [(c or "").strip().lower() for c in (table.get("columns") or [])]
 
@@ -453,18 +464,18 @@ def download_informe43_xlsx():
         return (tipo_persona, ruc, dv, nombre)
 
     # -------------------------
-    # Mapeo columnas del reporte VAT
+    # ✅ Mapeo para P&L (según tu preview)
+    # Nombre: columna "Nombre"
+    # Factura: columna "N.º"
+    # Fecha: columna "Fecha"
+    # Importe: columna "Importe"
     # -------------------------
-    idx_nombre  = find_col("nombre", "name", "vendor", "proveedor")
-    idx_no      = find_col("no", "nº", "numero", "number", "doc", "ref")
+    idx_nombre  = find_col("nombre", "name")
+    idx_no      = find_col("n.º", "n.", "no", "numero", "number", default=None)
     idx_fecha   = find_col("fecha", "date")
-    idx_importe = find_col("importe", "amount", "total")
+    idx_importe = find_col("importe", "amount", default=None)
 
-    # -------------------------
-    # Construir filas INFORME 43
-    # -------------------------
     output_rows = []
-
     for r in (table.get("rows") or []):
         if r.get("is_header") or r.get("is_summary"):
             continue
@@ -477,23 +488,29 @@ def download_informe43_xlsx():
 
         factura = get_cell(r, idx_no)
         fecha_fmt = to_yyyymmdd(get_cell(r, idx_fecha))
+
+        # Importe puede venir vacío en filas de totales; solo tomamos si es Data real
         importe = to_float(get_cell(r, idx_importe))
 
+        # Si no hay fecha ni número, probablemente no es una transacción real
+        if not fecha_fmt and not factura:
+            continue
+
         output_rows.append([
-            tipo_persona,   # TIPO DE PERSONA (N/J/E)
+            tipo_persona,   # TIPO DE PERSONA
             ruc,            # RUC
             dv,             # DV
             nombre,         # NOMBRE O RAZON SOCIAL
-            factura,        # FACTURA (No)
+            factura,        # FACTURA
             fecha_fmt,      # FECHA yyyymmdd
             "",             # CONCEPTO (blanco)
-            "",             # COMPRAS DE BIENES Y SERVICIOS (blanco)
-            importe,        # MONTO EN BALBOAS (Importe)
-            "",             # ITBMS PAGADO EN BALBOAS (blanco)
+            "",             # COMPRAS (blanco)
+            importe,        # MONTO EN BALBOAS
+            "",             # ITBMS (blanco)
         ])
 
     # -------------------------
-    # Crear Excel con formato template
+    # Excel template INFORME 43
     # -------------------------
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -552,8 +569,6 @@ def download_informe43_xlsx():
             cell = ws.cell(row=r_i, column=c_i, value=val)
             cell.border = border
             cell.alignment = Alignment(vertical="top", wrap_text=True)
-
-            # ✅ Solo MONTO EN BALBOAS (col 9) lleva formato moneda
             if c_i == 9 and isinstance(val, (int, float)):
                 cell.number_format = '#,##0.00'
 
