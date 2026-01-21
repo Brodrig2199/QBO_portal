@@ -596,28 +596,22 @@ def download_informe43_vat_xlsx():
         return ("", "", "", raw.replace("/", " ").strip())
 
     # -------------------------
-    # Map columnas VAT (según tu mapeo)
-    # -------------------------
-    idx_nombre = find_col_contains("nombre", "name", "vendor", "proveedor", "cliente")
-
-    # FACTURA
-    idx_no = find_col_contains("n.", "no", "nº", "numero", "number", "doc", "ref")
-
-    # FECHA
-    idx_fecha = find_col_contains("fecha", "date")
-
-    # ✅ MONTO EN BALBOAS = "Importe sujeto a impuestos"
-    idx_monto = find_col_contains("importe sujeto", "sujeto a impuesto", "taxable", "taxable amount")
-
-    # ✅ ITBMS PAGADO EN BALBOAS = "Importes"
-    idx_itbms = find_col_contains("importes", "tax amount", "itbms", "impuesto")
+# Map columnas VAT (exactas según tu captura)
+# -------------------------
+    idx_fecha = find_col_contains("fecha")
+    idx_no = find_col_contains("n.")
+    idx_ruc_cliente = find_col_contains("ruc no. de cliente")
+    idx_ruc_proveedor = find_col_contains("ruc no. de proveedor")
+    idx_nombre = find_col_contains("nombre")
+    idx_monto = find_col_contains("importe sujeto")
+    idx_itbms = find_col_contains("importe")
 
     # -------------------------
-    # Construir filas INFORME 43
+    # Construir filas INFORME 43 (VAT)
     # -------------------------
     rows_out = []
 
-    for r in (table.get("rows") or []):
+    for r in table.get("rows", []):
         if r.get("is_header") or r.get("is_summary"):
             continue
 
@@ -625,23 +619,28 @@ def download_informe43_vat_xlsx():
         if not nombre_raw:
             continue
 
-        tipo, ruc, dv, nombre = parse_vendor(nombre_raw)
+        tipo, ruc_from_name, dv, nombre = parse_vendor(nombre_raw)
 
-        monto = to_float(cell(r, idx_monto)) if idx_monto is not None else 0.0
-        itbms = to_float(cell(r, idx_itbms)) if idx_itbms is not None else 0.0
+        # 🔹 Prioridad RUC
+        ruc = (
+            cell(r, idx_ruc_proveedor)
+            or cell(r, idx_ruc_cliente)
+            or ruc_from_name
+        )
 
         rows_out.append([
-            tipo,                            # TIPO DE PERSONA
-            ruc,                             # RUC
-            dv,                              # DV
-            nombre,                          # NOMBRE O RAZON SOCIAL
-            cell(r, idx_no),                 # FACTURA
-            to_yyyymmdd(cell(r, idx_fecha)), # FECHA
-            "",                              # CONCEPTO
-            "",                              # COMPRAS
-            monto,                           # MONTO EN BALBOAS
-            itbms                            # ITBMS PAGADO EN BALBOAS
+            tipo,                                   # TIPO DE PERSONA
+            ruc,                                    # RUC
+            dv,                                     # DV
+            nombre,                                 # NOMBRE
+            cell(r, idx_no),                        # FACTURA
+            to_yyyymmdd(cell(r, idx_fecha)),        # FECHA
+            "",                                     # CONCEPTO
+            "",                                     # COMPRAS
+            to_float(cell(r, idx_monto)),           # MONTO EN BALBOAS
+            to_float(cell(r, idx_itbms)),           # ITBMS PAGADO
         ])
+
 
     # -------------------------
     # Crear Excel
