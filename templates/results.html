@@ -5,13 +5,107 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Resultado</title>
   <style>
-    body { font-family: Arial, sans-serif; background:#0b1220; color:#e8eefc; }
-    .wrap { max-width: 860px; margin: 40px auto; padding: 0 16px; }
-    .card { background:#121b2f; padding: 18px; border-radius: 14px; margin-top: 16px; }
-    table { width:100%; border-collapse: collapse; margin-top:12px; }
-    th, td { border-bottom: 1px solid #2a3a66; padding:10px; text-align:left; }
-    a { color:#93c5fd; text-decoration:none; }
-    .meta { color:#b7c4ea; font-size: 14px; line-height: 1.4; }
+    :root{
+      --bg:#0b1220;
+      --card:#121b2f;
+      --text:#e8eefc;
+      --muted:#b7c4ea;
+      --line:#2a3a66;
+      --link:#93c5fd;
+
+      --green:#2ca01c;
+      --green2:#238c16;
+      --btn:#1f2a44;
+      --btn2:#2a3a66;
+    }
+    body { font-family: Arial, sans-serif; background:var(--bg); color:var(--text); margin:0; }
+    .wrap { max-width: 980px; margin: 40px auto; padding: 0 16px; }
+    .card { background:var(--card); padding: 18px; border-radius: 14px; margin-top: 16px; border:1px solid rgba(255,255,255,0.04); }
+    a { color:var(--link); text-decoration:none; }
+    a:hover { text-decoration: underline; }
+
+    .meta { color:var(--muted); font-size: 14px; line-height: 1.6; margin-top: 8px;}
+    .meta b{ color: var(--text); }
+
+    h2 { margin: 0 0 8px 0; }
+    h4 { margin: 18px 0 10px 0; }
+
+    /* Table */
+    .table-wrap{
+      max-height: 450px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      margin-top: 10px;
+      background: rgba(0,0,0,0.15);
+    }
+    table { width:100%; border-collapse: collapse; min-width: 720px; }
+    thead th{
+      position: sticky;
+      top: 0;
+      background: #0f1830;
+      color: #dbe6ff;
+      z-index: 2;
+      border-bottom: 1px solid var(--line);
+      padding: 10px;
+      text-align: left;
+      font-size: 13px;
+    }
+    tbody td{
+      border-bottom: 1px solid rgba(42,58,102,0.6);
+      padding: 10px;
+      font-size: 13px;
+      vertical-align: top;
+    }
+    tbody tr:hover td{ background: rgba(147,197,253,0.06); }
+    .right{ text-align:right; }
+    .bold{ font-weight:700; }
+    .summary{
+      background: rgba(183,196,234,0.08);
+      font-weight:700;
+    }
+    .note{ color: var(--muted); font-size: 13px; margin-top: 10px; }
+
+    /* Buttons */
+    .actions{
+      display:flex;
+      gap:10px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+    .btn{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding: 11px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: var(--btn);
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 700;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+    }
+    .btn:hover{ background: #223056; text-decoration:none; }
+    .btn-green{
+      background: var(--green);
+      border-color: rgba(0,0,0,0.15);
+      color: #ffffff;
+    }
+    .btn-green:hover{
+      background: var(--green2);
+      text-decoration:none;
+    }
+    .btn-outline{
+      background: transparent;
+      border: 1px solid var(--btn2);
+      color: var(--text);
+      box-shadow:none;
+    }
+    .btn-outline:hover{
+      background: rgba(42,58,102,0.25);
+      text-decoration:none;
+    }
   </style>
 </head>
 <body>
@@ -28,35 +122,49 @@
         <div><b>Excluidas:</b> {{ data.meta.excluded_accounts }}</div>
       </div>
 
-      <table>
-        <thead>
-          <tr>
-            <th>Cuenta</th>
-            <th>Monto</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for r in data.rows %}
+      <h4>📊 Vista previa del reporte</h4>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
             <tr>
-              <td>{{ r.account }}</td>
-              <td>{{ "%.2f"|format(r.amount) }}</td>
+              {% for col in data.table.columns %}
+                <th>{{ col }}</th>
+              {% endfor %}
             </tr>
-          {% endfor %}
-        </tbody>
-        <tfoot>
-          <tr>
-            <th>Total</th>
-            <th>
-              {{ "%.2f"|format(data.rows|sum(attribute="amount")) }}
-            </th>
-          </tr>
-        </tfoot>
-        <a class="btn btn-success" href="{{ url_for('download_qbo_report_xlsx') }}">
-          Descargar Excel (QuickBooks)
+          </thead>
+
+          <tbody>
+            {% for row in data.table.rows[:20] %}
+              <tr class="{% if row.is_header or row.is_summary %}summary{% endif %}">
+                {% for cell in row.cells %}
+                  {% if loop.index0 == 0 %}
+                    <td style="padding-left: {{ row.level * 18 }}px;">
+                      {{ cell }}
+                    </td>
+                  {% else %}
+                    <td class="right">{{ cell }}</td>
+                  {% endif %}
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        Mostrando solo las primeras <b>20 filas</b>. Descarga el Excel para ver el reporte completo.
+      </div>
+
+      <div class="actions">
+        <a href="{{ url_for('download_qbo_report_xlsx') }}" class="btn btn-green">
+          ⬇️ Descargar Excel (QuickBooks)
         </a>
 
-
-      </table>
+        <a href="{{ url_for('reports') }}" class="btn btn-outline">
+          ⬅️ Volver
+        </a>
+      </div>
     </div>
   </div>
 </body>
