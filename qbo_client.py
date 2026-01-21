@@ -15,12 +15,15 @@ QBO_MINORVERSION = os.environ.get("QBO_MINORVERSION", "75")
 
 TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 
+
 def _api_base() -> str:
     return "https://quickbooks.api.intuit.com" if QBO_ENV == "production" else "https://sandbox-quickbooks.api.intuit.com"
+
 
 def _basic_auth_header() -> str:
     raw = f"{QBO_CLIENT_ID}:{QBO_CLIENT_SECRET}".encode("utf-8")
     return base64.b64encode(raw).decode("utf-8")
+
 
 def get_valid_access_token() -> tuple[str, str]:
     """
@@ -69,13 +72,17 @@ def get_valid_access_token() -> tuple[str, str]:
 
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
-    # Guardar tokens actualizados (MISMO realm_id)
     if not realm_id:
-        # si por alguna razón no existe, no podemos construir URLs de company
         raise RuntimeError("No hay realm_id guardado. Re-conecta en /connect.")
-    save_tokens(realm_id=realm_id, access_token=access_token, refresh_token=new_refresh, access_expires_at=expires_at)
 
+    save_tokens(
+        realm_id=realm_id,
+        access_token=access_token,
+        refresh_token=new_refresh,
+        access_expires_at=expires_at
+    )
     return access_token, realm_id
+
 
 def _request(method: str, url: str, access_token: str, **kwargs):
     headers = kwargs.pop("headers", {})
@@ -85,6 +92,7 @@ def _request(method: str, url: str, access_token: str, **kwargs):
     })
     return requests.request(method, url, headers=headers, timeout=30, **kwargs)
 
+
 def qbo_query(select_statement: str, access_token: str, realm_id: str) -> dict:
     url = f"{_api_base()}/v3/company/{realm_id}/query"
     params = {"query": select_statement, "minorversion": QBO_MINORVERSION}
@@ -93,12 +101,14 @@ def qbo_query(select_statement: str, access_token: str, realm_id: str) -> dict:
         raise RuntimeError(f"QBO query failed ({r.status_code}): {r.text}")
     return r.json()
 
+
 def get_customers(access_token: str, realm_id: str, active_only: bool = True, max_results: int = 1000):
     where = " WHERE Active = true" if active_only else ""
     q = f"SELECT Id, DisplayName, Active FROM Customer{where} MAXRESULTS {max_results}"
     data = qbo_query(q, access_token, realm_id)
     customers = data.get("QueryResponse", {}).get("Customer", []) or []
     return [{"id": c["Id"], "name": c.get("DisplayName", f"Customer {c['Id']}")} for c in customers]
+
 
 def get_accounts(access_token: str, realm_id: str, active_only: bool = True, max_results: int = 1000):
     where = " WHERE Active = true" if active_only else ""
@@ -111,72 +121,133 @@ def get_accounts(access_token: str, realm_id: str, active_only: bool = True, max
         "type": a.get("AccountType"),
         "subtype": a.get("AccountSubType"),
     } for a in accounts]
-def get_profit_and_loss(access_token: str, realm_id: str, start_date: str, end_date: str,
-                        accounting_method: str = "Accrual",
-                        summarize_column_by: str = "Total",
-                        customer_id: str | None = None) -> dict:
-    """
-    Llama Reports API: ProfitAndLoss
-    Docs: Run Reports (P&L) y query params start_date/end_date/accounting_method. :contentReference[oaicite:1]{index=1}
-    """
-    url = f"{_api_base()}/v3/company/{realm_id}/reports/ProfitAndLoss"
-    params = {
-        "start_date": start_date,
-        "end_date": end_date,
-        "accounting_method": accounting_method,   # Accrual o Cash
-        "summarize_column_by": summarize_column_by,  # Total, Month, etc.
-        "minorversion": QBO_MINORVERSION,
-    }
 
-    # OJO: algunos reportes aceptan filtro por customer; si te diera error, lo quitamos
-    if customer_id and customer_id != "all":
-        params["customer"] = customer_id
+
+# -------------------------
+# ✅ REPORTS API (GENÉRICO)
+# -------------------------
+def get_report(access_token: str, realm_id: str, report_name: str, **params) -> dict:
+    """
+    Llama Reports API genérico:
+      /v3/company/{realm_id}/reports/{report_name}
+    """
+    url = f"{_api_base()}/v3/company/{realm_id}/reports/{report_name}"
+
+    # minorversion siempre
+    params = {k: v for k, v in params.items() if v is not None}
+    params["minorversion"] = QBO_MINORVERSION
 
     r = _request("GET", url, access_token, params=params)
     if r.status_code >= 400:
-        raise RuntimeError(f"P&L report failed ({r.status_code}): {r.text}")
+        raise RuntimeError(f"QBO report '{report_name}' failed ({r.status_code}): {r.text}")
     return r.json()
-def parse_pl_to_rows(report_json: dict) -> list[dict]:
-    """
-    Convierte el report JSON (Rows/Row/ColData) a una lista:
-      [{"account": "Sales", "amount": 123.45}, ...]
-    """
-    rows_out = []
 
-    def walk(node):
+
+# ✅ Detalle de Pérdidas y Ganancias
+def get_profit_and_loss_detail(
+    access_token: str,
+    realm_id: str,
+    start_date: str,
+    end_date: str,
+    accounting_method: str = "Accrual",
+    summarize_column_by: str = "Total",
+    customer_id: str | None = None,
+) -> dict:
+    params = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "accounting_method": accounting_method,
+        "summarize_column_by": summarize_column_by,
+    }
+    if customer_id and customer_id != "all":
+        params["customer"] = customer_id
+
+    return get_report(access_token, realm_id, "ProfitAndLossDetail", **params)
+
+
+# ✅ VAT - Detalle de impuesto
+def get_vat_tax_detail(
+    access_token: str,
+    realm_id: str,
+    start_date: str,
+    end_date: str,
+) -> dict:
+    return get_report(access_token, realm_id, "TaxDetail", start_date=start_date, end_date=end_date)
+
+
+# -------------------------
+# ✅ Parser genérico “tal cual” Columns + Rows
+# -------------------------
+def parse_report_to_table(report_json: dict) -> dict:
+    """
+    Devuelve:
+      {
+        "columns": [..titulos..],
+        "col_types": [..tipos..],
+        "rows": [
+          {"level":0, "row_type":"Header|Data|Summary", "cells":[...], "is_header":bool, "is_summary":bool},
+          ...
+        ]
+      }
+    """
+    cols = report_json.get("Columns", {}).get("Column", []) or []
+    col_titles = []
+    col_types = []
+
+    for c in cols:
+        title = (c.get("ColTitle") or c.get("Title") or c.get("Name") or "").strip()
+        col_titles.append(title if title else "Column")
+        col_types.append((c.get("ColType") or "").strip())
+
+    out_rows = []
+
+    def row_to_cells(row_obj: dict) -> list[str]:
+        coldata = row_obj.get("ColData", []) or []
+        cells = []
+        for i in range(len(col_titles)):
+            v = ""
+            if i < len(coldata):
+                v = coldata[i].get("value") or ""
+            cells.append(v)
+        return cells
+
+    def emit(level: int, row_type: str, cells: list[str], is_header: bool, is_summary: bool):
+        out_rows.append({
+            "level": level,
+            "row_type": row_type,
+            "cells": cells,
+            "is_header": is_header,
+            "is_summary": is_summary,
+        })
+
+    def walk(node, level: int):
         if not node:
             return
 
-        # "Rows" puede tener "Row" (lista)
+        if isinstance(node, dict) and "Row" in node and isinstance(node["Row"], list):
+            for r in node["Row"]:
+                walk(r, level)
+            return
+
         if isinstance(node, dict):
-            if "Row" in node and isinstance(node["Row"], list):
-                for r in node["Row"]:
-                    walk(r)
-                return
+            rt = (node.get("RowType") or "").strip()  # ✅ RowType real
 
-            # Cada Row puede venir como "Header", "Rows" (sub-secciones), o "ColData"
-            if "Header" in node:
-                # Header solo describe sección, seguimos
-                pass
+            if "Header" in node and isinstance(node["Header"], dict):
+                emit(level, "Header", row_to_cells(node["Header"]), True, False)
 
-            # Si tiene ColData, normalmente es una fila con columnas
-            if "ColData" in node and isinstance(node["ColData"], list) and len(node["ColData"]) >= 2:
-                # En P&L: ColData[0] suele ser nombre, y la última el monto
-                name = (node["ColData"][0].get("value") or "").strip()
-                amt_raw = (node["ColData"][-1].get("value") or "").replace(",", "").strip()
+            if "ColData" in node and isinstance(node["ColData"], list) and node["ColData"]:
+                if rt.lower() == "summary":
+                    emit(level, "Summary", row_to_cells(node), False, True)
+                else:
+                    emit(level, rt if rt else "Data", row_to_cells(node), False, False)
 
-                # Evitar filas vacías o de totales raros
-                if name:
-                    try:
-                        amount = float(amt_raw) if amt_raw else 0.0
-                        rows_out.append({"account": name, "amount": amount})
-                    except ValueError:
-                        # Si no es número, igual guardamos la fila pero amount=0
-                        rows_out.append({"account": name, "amount": 0.0})
-
-            # Si tiene sub Rows, seguimos
             if "Rows" in node:
-                walk(node["Rows"])
+                next_level = level + 1 if rt.lower() == "section" else level
+                walk(node["Rows"], next_level)
 
-    walk(report_json.get("Rows", {}))
-    return rows_out
+            if "Summary" in node and isinstance(node["Summary"], dict):
+                emit(level, "Summary", row_to_cells(node["Summary"]), False, True)
+
+    walk(report_json.get("Rows", {}), 0)
+
+    return {"columns": col_titles, "col_types": col_types, "rows": out_rows}
