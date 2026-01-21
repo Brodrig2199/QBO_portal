@@ -359,20 +359,41 @@ def download_informe43_xlsx():
 
     def parse_vendor(name):
         """
-        FORMATO REAL:
-        NOMBRE/TIPO/RUC/DV
+        Soporta 2 formatos:
+        1) COMPLETO: NOMBRE/TIPO/RUC/DV
+        Ej: BANCO GENERAL/2/280-134-61098/2
+
+        2) PARCIAL: NOMBRE/TIPO
+        Ej: AMAZON/3  -> Tipo=E, RUC y DV en blanco
         """
-        m = re.match(r'^\s*(.+?)\s*/\s*([123])\s*/\s*([^/]+)\s*/\s*([^/]+)\s*$', name or "")
-        if not m:
-            return ("", "", "", name.replace("/", " ").strip())
+        raw = (name or "").strip()
+        if not raw:
+            return ("", "", "", "")
 
         tipo_map = {"1": "N", "2": "J", "3": "E"}
-        return (
-            tipo_map.get(m.group(2), ""),
-            m.group(3).strip(),
-            m.group(4).strip(),
-            m.group(1).strip()
-        )
+
+        # (1) COMPLETO: NOMBRE/TIPO/RUC/DV
+        m = re.match(r'^\s*(.+?)\s*/\s*([123])\s*/\s*([^/]+)\s*/\s*([^/]+)\s*$', raw)
+        if m:
+            return (
+                tipo_map.get(m.group(2).strip(), ""),
+                m.group(3).strip(),
+                m.group(4).strip(),
+                m.group(1).strip()
+            )
+
+        # (2) PARCIAL: NOMBRE/TIPO
+        m2 = re.match(r'^\s*(.+?)\s*/\s*([123])\s*$', raw)
+        if m2:
+            return (
+                tipo_map.get(m2.group(2).strip(), ""),
+                "",  # RUC vacío
+                "",  # DV vacío
+                m2.group(1).strip()
+            )
+
+        # fallback: nombre normal
+        return ("", "", "", raw.replace("/", " ").strip())
 
     # -------------------------
     # Map columnas del P&L
