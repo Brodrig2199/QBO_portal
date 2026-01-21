@@ -156,10 +156,18 @@
         Mostrando solo las primeras <b>20 filas</b>. Descarga el Excel para ver el reporte completo.
       </div>
 
-      <div class="actions">
+        <div class="actions">
+        <!-- ✅ Este queda como tu “preview descargable” (Excel QBO tal cual) -->
         <a href="{{ url_for('download_qbo_report_xlsx') }}" class="btn btn-green">
           ⬇️ Descargar Excel (QuickBooks)
         </a>
+
+        <!-- ✅ Este genera y descarga el INFORME 43 -->
+        {% if data.meta.report_type == "vat_tax_detail" %}
+          <a href="{{ url_for('download_informe43_xlsx') }}" class="btn btn-green">
+            🧾 Descargar INFORME 43 (Excel)
+          </a>
+        {% endif %}
 
         <a href="{{ url_for('reports') }}" class="btn btn-outline">
           ⬅️ Volver
