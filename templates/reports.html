@@ -49,12 +49,11 @@
 
       <form method="post" action="/run-report">
         <label>Tipo de reporte</label>
-        <select name="report_type" required>
-          <option value="" disabled selected>Selecciona un reporte</option>
-          {% for r in report_types %}
-            <option value="{{ r.id }}">{{ r.name }}</option>
-          {% endfor %}
-        </select>
+       <select name="report_type">
+        {% for rt in report_types %}
+        <option value="{{ rt.id }}">{{ rt.name }}</option>
+        {% endfor %}
+      </select>
 
         <div class="row">
           <div>
