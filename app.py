@@ -59,7 +59,6 @@ def fetch_qbo_report(report_type: str, start_date: str, end_date: str, client_id
             start_date=start_date,
             end_date=end_date,
             accounting_method="Accrual",
-            summarize_column_by="Total",
             customer_id=None if client_id == "all" else client_id
         )
         table = parse_report_to_table(report_json)

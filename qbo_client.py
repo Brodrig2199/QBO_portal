@@ -152,19 +152,19 @@ def get_profit_and_loss_detail(
     start_date: str,
     end_date: str,
     accounting_method: str = "Accrual",
-    summarize_column_by: str = "Total",
     customer_id: str | None = None,
 ) -> dict:
     params = {
         "start_date": start_date,
         "end_date": end_date,
         "accounting_method": accounting_method,
-        "summarize_column_by": summarize_column_by,
     }
+
     if customer_id and customer_id != "all":
         params["customer"] = customer_id
 
     return get_report(access_token, realm_id, "ProfitAndLossDetail", **params)
+
 
 
 # ✅ VAT - Detalle de impuesto
