@@ -528,27 +528,34 @@ def download_informe43_vat_xlsx():
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
     from openpyxl.utils import get_column_letter
 
-    cols = [(c or "").lower() for c in table.get("columns", [])]
+    cols = [(c or "").strip().lower() for c in table.get("columns", [])]
 
-    def find_col(*keys):
-        for k in keys:
-            for i, c in enumerate(cols):
-                if k in c:
+    def find_col_contains(*keywords):
+        # match por "contiene", para soportar títulos largos
+        for i, c in enumerate(cols):
+            for k in keywords:
+                if k.lower() in c:
                     return i
         return None
 
     def cell(row, idx):
         if idx is None:
             return ""
-        return (row["cells"][idx] or "").strip()
+        cells = row.get("cells") or []
+        if idx < 0 or idx >= len(cells):
+            return ""
+        return (cells[idx] or "").strip()
 
     def to_float(x):
         try:
-            return float(str(x).replace(",", ""))
+            return float(str(x).replace(",", "").strip())
         except:
             return 0.0
 
     def to_yyyymmdd(s):
+        s = (s or "").strip()
+        if not s:
+            return ""
         for f in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y"):
             try:
                 return datetime.strptime(s, f).strftime("%Y%m%d")
@@ -557,6 +564,11 @@ def download_informe43_vat_xlsx():
         return ""
 
     def parse_vendor(name):
+        """
+        Soporta:
+        - COMPLETO: NOMBRE/TIPO/RUC/DV   Ej: BANCO GENERAL/2/280-134-61098/2
+        - PARCIAL: NOMBRE/TIPO          Ej: AMAZON/3
+        """
         raw = (name or "").strip()
         if not raw:
             return ("", "", "", "")
@@ -576,29 +588,37 @@ def download_informe43_vat_xlsx():
         if m2:
             return (
                 tipo_map.get(m2.group(2).strip(), ""),
-                "",
-                "",
+                "",  # RUC
+                "",  # DV
                 m2.group(1).strip()
             )
 
         return ("", "", "", raw.replace("/", " ").strip())
 
     # -------------------------
-    # Map columnas VAT (ajusta si tu TaxDetail tiene otros nombres)
+    # Map columnas VAT (según tu mapeo)
     # -------------------------
-    idx_nombre  = find_col("nombre", "name", "vendor", "proveedor")
-    idx_no      = find_col("n.", "no", "nº", "numero", "number", "doc")
-    idx_fecha   = find_col("fecha", "date")
-    idx_monto   = find_col("importe", "amount", "total", "monto")
-    idx_itbms   = find_col("itbms", "tax", "impuesto", "vat")
+    idx_nombre = find_col_contains("nombre", "name", "vendor", "proveedor", "cliente")
+
+    # FACTURA
+    idx_no = find_col_contains("n.", "no", "nº", "numero", "number", "doc", "ref")
+
+    # FECHA
+    idx_fecha = find_col_contains("fecha", "date")
+
+    # ✅ MONTO EN BALBOAS = "Importe sujeto a impuestos"
+    idx_monto = find_col_contains("importe sujeto", "sujeto a impuesto", "taxable", "taxable amount")
+
+    # ✅ ITBMS PAGADO EN BALBOAS = "Importes"
+    idx_itbms = find_col_contains("importes", "tax amount", "itbms", "impuesto")
 
     # -------------------------
     # Construir filas INFORME 43
     # -------------------------
     rows_out = []
 
-    for r in table["rows"]:
-        if r["is_header"] or r["is_summary"]:
+    for r in (table.get("rows") or []):
+        if r.get("is_header") or r.get("is_summary"):
             continue
 
         nombre_raw = cell(r, idx_nombre)
@@ -607,24 +627,24 @@ def download_informe43_vat_xlsx():
 
         tipo, ruc, dv, nombre = parse_vendor(nombre_raw)
 
-        monto = to_float(cell(r, idx_monto))
+        monto = to_float(cell(r, idx_monto)) if idx_monto is not None else 0.0
         itbms = to_float(cell(r, idx_itbms)) if idx_itbms is not None else 0.0
 
         rows_out.append([
-            tipo,
-            ruc,
-            dv,
-            nombre,
-            cell(r, idx_no),
-            to_yyyymmdd(cell(r, idx_fecha)),
-            "",
-            "",
-            monto,
-            itbms if itbms != 0 else 0.0
+            tipo,                            # TIPO DE PERSONA
+            ruc,                             # RUC
+            dv,                              # DV
+            nombre,                          # NOMBRE O RAZON SOCIAL
+            cell(r, idx_no),                 # FACTURA
+            to_yyyymmdd(cell(r, idx_fecha)), # FECHA
+            "",                              # CONCEPTO
+            "",                              # COMPRAS
+            monto,                           # MONTO EN BALBOAS
+            itbms                            # ITBMS PAGADO EN BALBOAS
         ])
 
     # -------------------------
-    # Crear Excel (mismo formato)
+    # Crear Excel
     # -------------------------
     wb = Workbook()
     ws = wb.active
@@ -662,12 +682,16 @@ def download_informe43_vat_xlsx():
         c.border = border
         c.alignment = Alignment(horizontal="center", wrap_text=True)
 
-    for rr, row in enumerate(rows_out, start=6):
-        for cc, val in enumerate(row, start=1):
+    for rr, rowvals in enumerate(rows_out, start=6):
+        for cc, val in enumerate(rowvals, start=1):
             cellx = ws.cell(row=rr, column=cc, value=val)
             cellx.border = border
+
+            # Texto para RUC y DV
             if cc in (2, 3):
                 cellx.number_format = '@'
+
+            # Formato moneda para MONTO e ITBMS
             if cc in (9, 10):
                 cellx.number_format = '#,##0.00'
 
