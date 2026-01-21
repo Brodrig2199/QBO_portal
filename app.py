@@ -595,16 +595,28 @@ def download_informe43_vat_xlsx():
 
         return ("", "", "", raw.replace("/", " ").strip())
 
+   
+    ## -------------------------
+    # Map columnas VAT (evitar choque "importe" vs "importe sujeto")
     # -------------------------
-# Map columnas VAT (exactas según tu captura)
-# -------------------------
     idx_fecha = find_col_contains("fecha")
     idx_no = find_col_contains("n.")
     idx_ruc_cliente = find_col_contains("ruc no. de cliente")
     idx_ruc_proveedor = find_col_contains("ruc no. de proveedor")
     idx_nombre = find_col_contains("nombre")
-    idx_monto = find_col_contains("importe sujeto")
-    idx_itbms = find_col_contains("importe")
+
+    # ✅ MONTO EN BALBOAS = IMPORTE SUJETO A IMPUESTOS
+    idx_monto = find_col_contains("importe sujeto a impuestos", "importe sujeto")
+
+    # ✅ ITBMS PAGADO = IMPORTE (PERO NO EL "IMPORTE SUJETO")
+    idx_itbms = None
+    for i, c in enumerate(cols):
+        c = (c or "").strip().lower()
+        if c == "importe" or c.startswith("importe "):   # agarra IMPORTE exacto
+            if "sujeto" not in c:                        # evita "importe sujeto"
+                idx_itbms = i
+                break
+
 
     # -------------------------
     # Construir filas INFORME 43 (VAT)
@@ -629,17 +641,18 @@ def download_informe43_vat_xlsx():
         )
 
         rows_out.append([
-            tipo,                                   # TIPO DE PERSONA
-            ruc,                                    # RUC
-            dv,                                     # DV
-            nombre,                                 # NOMBRE
-            cell(r, idx_no),                        # FACTURA
-            to_yyyymmdd(cell(r, idx_fecha)),        # FECHA
-            "",                                     # CONCEPTO
-            "",                                     # COMPRAS
-            to_float(cell(r, idx_monto)),           # MONTO EN BALBOAS
-            to_float(cell(r, idx_itbms)),           # ITBMS PAGADO
-        ])
+        tipo,
+        ruc,
+        dv,
+        nombre,
+        cell(r, idx_no),
+        to_yyyymmdd(cell(r, idx_fecha)),
+        "",
+        "",
+        to_float(cell(r, idx_monto)),   # ✅ MONTO EN BALBOAS (importe sujeto a impuestos)
+        to_float(cell(r, idx_itbms)),   # ✅ ITBMS PAGADO (importe)
+    ])
+
 
 
     # -------------------------
