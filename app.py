@@ -15,7 +15,10 @@ from qbo_client import (
     get_accounts,
     get_profit_and_loss_detail,
     get_vat_tax_detail,
-    parse_report_to_table
+    parse_report_to_table,
+    get_vendors,
+    get_vendor,
+    extract_vendor_otros
 )
 
 app = Flask(__name__)
@@ -329,212 +332,13 @@ def download_informe43_xlsx():
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
     from openpyxl.utils import get_column_letter
 
-    cols = [(c or "").lower() for c in table.get("columns", [])]
-
-    def find_col(*keys):
-        for k in keys:
-            for i, c in enumerate(cols):
-                if k in c:
-                    return i
-        return None
-
-    def cell(row, idx):
-        if idx is None:
-            return ""
-        return (row["cells"][idx] or "").strip()
-
-    def to_float(x):
-        try:
-            return float(str(x).replace(",", ""))
-        except:
-            return 0.0
-
-    def to_yyyymmdd(s):
-        for f in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y"):
-            try:
-                return datetime.strptime(s, f).strftime("%Y%m%d")
-            except:
-                pass
-        return ""
-
-    def parse_vendor(name):
-        """
-        Soporta 2 formatos:
-        1) COMPLETO: NOMBRE/TIPO/RUC/DV
-        Ej: BANCO GENERAL/2/280-134-61098/2
-
-        2) PARCIAL: NOMBRE/TIPO
-        Ej: AMAZON/3  -> Tipo=E, RUC y DV en blanco
-        """
-        raw = (name or "").strip()
-        if not raw:
-            return ("", "", "", "")
-
-        tipo_map = {"1": "N", "2": "J", "3": "E"}
-
-        # (1) COMPLETO: NOMBRE/TIPO/RUC/DV
-        m = re.match(r'^\s*(.+?)\s*/\s*([123])\s*/\s*([^/]+)\s*/\s*([^/]+)\s*$', raw)
-        if m:
-            return (
-                tipo_map.get(m.group(2).strip(), ""),
-                m.group(3).strip(),
-                m.group(4).strip(),
-                m.group(1).strip()
-            )
-
-        # (2) PARCIAL: NOMBRE/TIPO
-        m2 = re.match(r'^\s*(.+?)\s*/\s*([123])\s*$', raw)
-        if m2:
-            return (
-                tipo_map.get(m2.group(2).strip(), ""),
-                "",  # RUC vacío
-                "",  # DV vacío
-                m2.group(1).strip()
-            )
-
-        # fallback: nombre normal
-        return ("", "", "", raw.replace("/", " ").strip())
-
-    # -------------------------
-    # Map columnas del P&L
-    # -------------------------
-    idx_nombre = find_col("nombre")
-    idx_no = find_col("n.", "no")
-    idx_fecha = find_col("fecha")
-    idx_importe = find_col("importe")
-
-    # -------------------------
-    # Construir filas INFORME 43
-    # -------------------------
-    rows_out = []
-
-    for r in table["rows"]:
-        if r["is_header"] or r["is_summary"]:
-            continue
-
-        nombre_raw = cell(r, idx_nombre)
-        if not nombre_raw:
-            continue
-
-        tipo, ruc, dv, nombre = parse_vendor(nombre_raw)
-
-        rows_out.append([
-            tipo,                       # TIPO PERSONA
-            ruc,                        # RUC
-            dv,                         # DV
-            nombre,                     # NOMBRE
-            cell(r, idx_no),            # FACTURA
-            to_yyyymmdd(cell(r, idx_fecha)),  # FECHA
-            "",                          # CONCEPTO
-            "",                          # COMPRAS
-            to_float(cell(r, idx_importe)),   # MONTO
-            ""                           # ITBMS
-        ])
-
-    # -------------------------
-    # Crear Excel
-    # -------------------------
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "INFORME 43"
-
-    headers = [
-        "TIPO DE PERSONA",
-        "RUC",
-        "DV",
-        "NOMBRE O RAZON SOCIAL",
-        "FACTURA",
-        "FECHA",
-        "CONCEPTO",
-        "COMPRAS DE BIENES Y SERVICIOS",
-        "MONTO EN BALBOAS",
-        "ITBMS PAGADO EN BALBOAS",
-    ]
-
-    bold = Font(bold=True)
-    fill = PatternFill("solid", fgColor="EFEFEF")
-    thin = Side(style="thin")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
-    ws["A1"] = "INFORME 43 - FORMATO A DILIGENCIAR"
-    ws["A1"].font = Font(bold=True, size=13)
-
-    ws.append([])
-    ws.append([])
-
-    for i, h in enumerate(headers, start=1):
-        c = ws.cell(row=5, column=i, value=h)
-        c.font = bold
-        c.fill = fill
-        c.border = border
-        c.alignment = Alignment(horizontal="center", wrap_text=True)
-
-    for r, row in enumerate(rows_out, start=6):
-        for c, val in enumerate(row, start=1):
-            cellx = ws.cell(row=r, column=c, value=val)
-            cellx.border = border
-            if c in (9, 10):
-             cellx.number_format = '#,##0.00'
-
-            if c in (2, 3):
-                cellx.number_format = '@'
-
-    widths = [16, 18, 6, 35, 14, 12, 18, 30, 18, 22]
-    for i, w in enumerate(widths, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = w
-
-    ws.freeze_panes = "A6"
-
-    stream = io.BytesIO()
-    wb.save(stream)
-    stream.seek(0)
-
-    return send_file(
-        stream,
-        as_attachment=True,
-        download_name=f"INFORME43_{meta['start_date']}_{meta['end_date']}.xlsx",
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-@app.get("/download/informe43_vat.xlsx")
-@login_required
-def download_informe43_vat_xlsx():
-    meta = session.get("last_report_meta")
-    if not meta:
-        flash("No hay parámetros del reporte. Genera uno primero.")
-        return redirect(url_for("reports"))
-
-    if meta.get("report_type") != "vat_tax_detail":
-        flash("Para este INFORME 43 (VAT) primero genera el reporte: VAT - Detalle de Impuestos.")
-        return redirect(url_for("reports"))
-
-    access_token, realm_id = get_valid_access_token()
-
-    report_json = get_vat_tax_detail(
-        access_token=access_token,
-        realm_id=realm_id,
-        start_date=meta["start_date"],
-        end_date=meta["end_date"],
-    )
-
-    table = parse_report_to_table(report_json)
-
-    # -------------------------
-    # Helpers
-    # -------------------------
-    import re, io
-    from datetime import datetime
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-    from openpyxl.utils import get_column_letter
-
     cols = [(c or "").strip().lower() for c in table.get("columns", [])]
 
-    def find_col_contains(*keywords):
-        # match por "contiene", para soportar títulos largos
-        for i, c in enumerate(cols):
-            for k in keywords:
-                if k.lower() in c:
+    def find_col_contains(*keys):
+        for k in keys:
+            kk = (k or "").strip().lower()
+            for i, c in enumerate(cols):
+                if kk in c:
                     return i
         return None
 
@@ -548,7 +352,8 @@ def download_informe43_vat_xlsx():
 
     def to_float(x):
         try:
-            return float(str(x).replace(",", "").strip())
+            s = str(x).replace(",", "").strip()
+            return float(s) if s else 0.0
         except:
             return 0.0
 
@@ -561,13 +366,16 @@ def download_informe43_vat_xlsx():
                 return datetime.strptime(s, f).strftime("%Y%m%d")
             except:
                 pass
+        # si ya viene como 20251205
+        if len(s) == 8 and s.isdigit():
+            return s
         return ""
 
     def parse_vendor(name):
         """
         Soporta:
-        - COMPLETO: NOMBRE/TIPO/RUC/DV   Ej: BANCO GENERAL/2/280-134-61098/2
-        - PARCIAL: NOMBRE/TIPO          Ej: AMAZON/3
+        1) NOMBRE/TIPO/RUC/DV  Ej: BANCO GENERAL/2/280-134-61098/2
+        2) NOMBRE/TIPO         Ej: AMAZON/3
         """
         raw = (name or "").strip()
         if not raw:
@@ -588,42 +396,103 @@ def download_informe43_vat_xlsx():
         if m2:
             return (
                 tipo_map.get(m2.group(2).strip(), ""),
-                "",  # RUC
-                "",  # DV
+                "",
+                "",
                 m2.group(1).strip()
             )
 
         return ("", "", "", raw.replace("/", " ").strip())
 
-   
-    ## -------------------------
-    # Map columnas VAT (evitar choque "importe" vs "importe sujeto")
+    def parse_otros(otros_raw: str):
+        """
+        OTROS esperado: "CONCEPTO/COMPRAS"
+        Ej: "1/505" => concepto=1, compras=505
+        """
+        s = (otros_raw or "").strip()
+        if not s:
+            return ("", "")
+        parts = [p.strip() for p in s.split("/") if p.strip()]
+        concepto = parts[0] if len(parts) >= 1 else ""
+        compras = parts[1] if len(parts) >= 2 else ""
+        return (concepto, compras)
+
+    def is_panama_cedula(ruc: str) -> bool:
+        s = (ruc or "").strip().upper()
+        return bool(re.match(r'^\d{1,2}-\d{1,6}-\d{1,6}$', s))
+
+    def infer_tipo_persona(tipo_from_name: str, ruc: str) -> str:
+        t = (tipo_from_name or "").strip().upper()
+        if t in ("N", "J", "E"):
+            return t
+
+        r = (ruc or "").strip().upper()
+        if is_panama_cedula(r):
+            return "N"
+        if r.startswith("E") or "PASAPORTE" in r or "PASS" in r:
+            return "E"
+
+        digits = re.sub(r"\D", "", r)
+        if len(digits) >= 10:
+            return "J"
+        return ""
+
+    def normalize_factura(factura_raw: str, seq_num: int) -> str:
+        f = (factura_raw or "").strip()
+        return f if f else f"F-{seq_num}"
+
+        # -------------------------
+    # ✅ MAPA: nombre_proveedor -> "Otro"
     # -------------------------
-    idx_fecha = find_col_contains("fecha")
-    idx_no = find_col_contains("n.")
-    idx_ruc_cliente = find_col_contains("ruc no. de cliente")
-    idx_ruc_proveedor = find_col_contains("ruc no. de proveedor")
-    idx_nombre = find_col_contains("nombre")
+    vendors = get_vendors(access_token, realm_id, active_only=True)
+    vendor_id_by_name = { (v["name"] or "").strip().lower(): v["id"] for v in vendors if v.get("name") and v.get("id") }
 
-    # ✅ MONTO EN BALBOAS = IMPORTE SUJETO A IMPUESTOS
-    idx_monto = find_col_contains("importe sujeto a impuestos", "importe sujeto")
+    vendor_otros_cache = {}  # name_lower -> "2/1"
 
-    # ✅ ITBMS PAGADO = IMPORTE (PERO NO EL "IMPORTE SUJETO")
-    idx_itbms = None
-    for i, c in enumerate(cols):
-        c = (c or "").strip().lower()
-        if c == "importe" or c.startswith("importe "):   # agarra IMPORTE exacto
-            if "sujeto" not in c:                        # evita "importe sujeto"
-                idx_itbms = i
-                break
+    def get_otros_for_vendor_name(vendor_name_clean: str) -> str:
+        """
+        vendor_name_clean = nombre ya limpio (sin /tipo/ruc/dv)
+        """
+        key = (vendor_name_clean or "").strip().lower()
+        if not key:
+            return ""
+        if key in vendor_otros_cache:
+            return vendor_otros_cache[key]
+
+        vid = vendor_id_by_name.get(key)
+        if not vid:
+            vendor_otros_cache[key] = ""
+            return ""
+
+        try:
+            payload = get_vendor(access_token, realm_id, vid)
+            otros = extract_vendor_otros(payload)  # "2/1"
+            vendor_otros_cache[key] = otros
+            return otros
+        except Exception:
+            vendor_otros_cache[key] = ""
+            return ""
 
 
     # -------------------------
-    # Construir filas INFORME 43 (VAT)
+    # MAP COLUMNAS (P&L DETAIL)
+    # -------------------------
+    idx_fecha   = find_col_contains("fecha", "date")
+    idx_no      = find_col_contains("n.", "no", "nº", "numero")
+    idx_nombre  = find_col_contains("nombre", "name")
+    idx_importe = find_col_contains("importe", "amount")
+    idx_otros   = find_col_contains("otros", "other", "notas", "descripción", "descripcion", "notas/descripcion", "notes")
+
+    # Opcional: Cuenta contable si quieres usarla luego
+    idx_cuenta_div = find_col_contains("cuenta de división", "cuenta de division", "dividir", "split")
+
+
+    # -------------------------
+    # CONSTRUIR FILAS INFORME 43 (DESDE P&L)
     # -------------------------
     rows_out = []
+    seq = 1
 
-    for r in table.get("rows", []):
+    for r in (table.get("rows") or []):
         if r.get("is_header") or r.get("is_summary"):
             continue
 
@@ -631,27 +500,34 @@ def download_informe43_vat_xlsx():
         if not nombre_raw:
             continue
 
-        tipo, ruc_from_name, dv, nombre = parse_vendor(nombre_raw)
+        tipo_from_name, ruc_from_name, dv, nombre = parse_vendor(nombre_raw)
 
-        # 🔹 Prioridad RUC
-        ruc = (
-            cell(r, idx_ruc_proveedor)
-            or cell(r, idx_ruc_cliente)
-            or ruc_from_name
-        )
+        # si el nombre no trae ruc, quedará vacío (ok). Igual inferimos tipo si se puede.
+        ruc = ruc_from_name or ""
+        tipo = infer_tipo_persona(tipo_from_name, ruc)
+
+        # Concepto/Compras desde OTROS
+        otros_raw = get_otros_for_vendor_name(nombre)
+        concepto, compras = parse_otros(otros_raw)
+
+        factura = normalize_factura(cell(r, idx_no), seq)
+        seq += 1
+
+        monto = to_float(cell(r, idx_importe))
 
         rows_out.append([
-        tipo,
-        ruc,
-        dv,
-        nombre,
-        cell(r, idx_no),
-        to_yyyymmdd(cell(r, idx_fecha)),
-        "",
-        "",
-        to_float(cell(r, idx_monto)),   # ✅ MONTO EN BALBOAS (importe sujeto a impuestos)
-        to_float(cell(r, idx_itbms)),   # ✅ ITBMS PAGADO (importe)
-    ])
+            tipo,                              # TIPO
+            ruc,                               # RUC
+            dv,                                # DV
+            nombre,                            # NOMBRE
+            factura,                           # FACTURA (F-n)
+            to_yyyymmdd(cell(r, idx_fecha)),   # FECHA yyyymmdd
+            concepto,                          # CONCEPTO (de OTROS)
+            compras,                           # COMPRAS (de OTROS)
+            monto,                             # MONTO EN BALBOAS (importe)
+            0.00                               # ITBMS PAGADO (cero)
+        ])
+
 
 
 

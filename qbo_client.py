@@ -122,6 +122,49 @@ def get_accounts(access_token: str, realm_id: str, active_only: bool = True, max
         "subtype": a.get("AccountSubType"),
     } for a in accounts]
 
+def get_vendors(access_token: str, realm_id: str, active_only: bool = True, max_results: int = 1000):
+    where = " WHERE Active = true" if active_only else ""
+    q = f"SELECT Id, DisplayName, Active FROM Vendor{where} MAXRESULTS {max_results}"
+    data = qbo_query(q, access_token, realm_id)
+    vendors = data.get("QueryResponse", {}).get("Vendor", []) or []
+    return [{"id": v["Id"], "name": v.get("DisplayName", "")} for v in vendors]
+
+
+def get_vendor(access_token: str, realm_id: str, vendor_id: str) -> dict:
+    url = f"{_api_base()}/v3/company/{realm_id}/vendor/{vendor_id}"
+    params = {"minorversion": QBO_MINORVERSION}
+    r = _request("GET", url, access_token, params=params)
+    if r.status_code >= 400:
+        raise RuntimeError(f"QBO vendor get failed ({r.status_code}): {r.text}")
+    return r.json()
+
+
+def extract_vendor_otros(vendor_payload: dict) -> str:
+    """
+    Devuelve el valor del campo 'Otro' del proveedor.
+    En QuickBooks suele venir en Vendor.OtherContactInfo con Type='Other'
+    pero puede variar; por eso hay varios fallbacks.
+    """
+    v = (vendor_payload or {}).get("Vendor", {}) or {}
+
+    # 1) OtherContactInfo: lista
+    oci = v.get("OtherContactInfo") or []
+    if isinstance(oci, list):
+        for item in oci:
+            t = (item.get("Type") or "").strip().lower()
+            if t == "other":
+                # algunos tenants usan "Value", otros "Telephone"
+                val = (item.get("Value") or item.get("Telephone") or "").strip()
+                if val:
+                    return val
+
+    # 2) Fallbacks posibles
+    for key in ("Other", "Notes", "NotesText", "Memo"):
+        val = v.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+
+    return ""
 
 # -------------------------
 # ✅ REPORTS API (GENÉRICO)
