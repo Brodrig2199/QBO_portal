@@ -441,40 +441,93 @@ def download_informe43_xlsx():
         return f if f else f"F-{seq_num}"
 
     # -------------------------
-    # ✅ Concepto/Compras desde Vendor.Otro (API)
+    # ✅ Concepto/Compras desde Vendor.Otro (API) con match robusto + paginación
     # -------------------------
-    def norm_name(s: str) -> str:
-        return " ".join((s or "").replace("\u00a0", " ").strip().upper().split())
+    import unicodedata
+
+    def norm_key(s: str) -> str:
+        """
+        Normaliza para match:
+        - uppercase
+        - sin acentos
+        - solo letras/números/espacios
+        - colapsa espacios
+        """
+        s = (s or "").strip().upper()
+        s = unicodedata.normalize("NFKD", s)
+        s = "".join(ch for ch in s if not unicodedata.combining(ch))  # quita acentos
+        # deja solo alfanum y espacios
+        s = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in s)
+        s = " ".join(s.split())
+        return s
 
     def base_name(s: str) -> str:
-        # Si viene "BANCO GENERAL/2/280-134/2" => base = "BANCO GENERAL"
-        return norm_name((s or "").split("/")[0])
+        return (s or "").split("/")[0].strip()
 
-    # 1) Traer lista de vendors una sola vez
-    vendors = get_vendors(access_token, realm_id, active_only=False, max_results=1000)
+    # 1) Traer vendors paginando (hasta 5000 por seguridad)
+    vendor_index = {}      # key normalizada -> vendor_id
+    vendor_key_list = []   # lista de keys para fallback "contiene"
+    start = 1
+    page_size = 1000
+    total_loaded = 0
 
-    # 2) Index por nombre completo y por base (para que matchee aunque venga con /...)
-    vendor_index = {}
-    for v in vendors:
-        full = norm_name(v["name"])
-        b = base_name(v["name"])
-        if full:
-            vendor_index[full] = v["id"]
-        if b:
-            vendor_index.setdefault(b, v["id"])  # no pisa si ya existe
+    while True:
+        chunk = get_vendors(access_token, realm_id, active_only=False, max_results=page_size, start_position=start)
+        if not chunk:
+            break
 
-    # 3) Cache por vendor_id para no llamar 300 veces
+        for v in chunk:
+            full = norm_key(v["name"])
+            base = norm_key(base_name(v["name"]))
+
+            if full and full not in vendor_index:
+                vendor_index[full] = v["id"]
+                vendor_key_list.append(full)
+
+            if base and base not in vendor_index:
+                vendor_index[base] = v["id"]
+                vendor_key_list.append(base)
+
+        total_loaded += len(chunk)
+        if len(chunk) < page_size or total_loaded >= 5000:
+            break
+        start += page_size
+
+    # 2) Cache para no llamar vendor/{id} repetido
     vendor_otro_cache: dict[str, str] = {}
 
-    def get_otro_for_vendor_name(display_name_from_report: str) -> str:
+    def get_vendor_id_from_report_name(name_from_report: str) -> str | None:
         """
-        Recibe el nombre del reporte (puede venir con /tipo/ruc/dv)
-        y devuelve el 'Otro' del vendor.
+        Match usando:
+        1) key completa normalizada
+        2) base name normalizado
+        3) fallback: contiene
         """
-        key_full = norm_name(display_name_from_report)
-        key_base = base_name(display_name_from_report)
+        raw = (name_from_report or "").strip()
+        if not raw:
+            return None
 
-        vendor_id = vendor_index.get(key_full) or vendor_index.get(key_base)
+        k_full = norm_key(raw)
+        k_base = norm_key(base_name(raw))
+
+        vid = vendor_index.get(k_full) or vendor_index.get(k_base)
+        if vid:
+            return vid
+
+        # fallback "contiene" (más lento, pero solo si falló)
+        # intentamos con base primero
+        target = k_base or k_full
+        if not target:
+            return None
+
+        for k in vendor_key_list:
+            if target in k:
+                return vendor_index.get(k)
+
+        return None
+
+    def get_otro_for_vendor_name(name_from_report: str) -> str:
+        vendor_id = get_vendor_id_from_report_name(name_from_report)
         if not vendor_id:
             return ""
 
@@ -482,8 +535,8 @@ def download_informe43_xlsx():
             return vendor_otro_cache[vendor_id]
 
         payload = get_vendor_detail(access_token, realm_id, vendor_id)
-        otro = extract_vendor_otro(payload)  # e.g. "2/1"
-        vendor_otro_cache[vendor_id] = otro or ""
+        otro = extract_vendor_otro(payload)  # ejemplo "2/1"
+        vendor_otro_cache[vendor_id] = (otro or "").strip()
         return vendor_otro_cache[vendor_id]
 
 

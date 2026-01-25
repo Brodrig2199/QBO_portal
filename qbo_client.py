@@ -125,9 +125,9 @@ def get_accounts(access_token: str, realm_id: str, active_only: bool = True, max
 # -------------------------
 # ✅ Vendors: lista + detalle + leer "Otro"
 # -------------------------
-def get_vendors(access_token: str, realm_id: str, active_only: bool = True, max_results: int = 1000):
+def get_vendors(access_token: str, realm_id: str, active_only: bool = True, max_results: int = 1000, start_position: int = 1):
     where = " WHERE Active = true" if active_only else ""
-    q = f"SELECT Id, DisplayName, Active FROM Vendor{where} MAXRESULTS {max_results}"
+    q = f"SELECT Id, DisplayName, Active FROM Vendor{where} STARTPOSITION {start_position} MAXRESULTS {max_results}"
     data = qbo_query(q, access_token, realm_id)
     vendors = data.get("QueryResponse", {}).get("Vendor", []) or []
     return [{"id": v["Id"], "name": v.get("DisplayName", "")} for v in vendors]
