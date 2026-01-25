@@ -122,6 +122,9 @@ def get_accounts(access_token: str, realm_id: str, active_only: bool = True, max
         "subtype": a.get("AccountSubType"),
     } for a in accounts]
 
+# -------------------------
+# ✅ Vendors: lista + detalle + leer "Otro"
+# -------------------------
 def get_vendors(access_token: str, realm_id: str, active_only: bool = True, max_results: int = 1000):
     where = " WHERE Active = true" if active_only else ""
     q = f"SELECT Id, DisplayName, Active FROM Vendor{where} MAXRESULTS {max_results}"
@@ -130,41 +133,38 @@ def get_vendors(access_token: str, realm_id: str, active_only: bool = True, max_
     return [{"id": v["Id"], "name": v.get("DisplayName", "")} for v in vendors]
 
 
-def get_vendor(access_token: str, realm_id: str, vendor_id: str) -> dict:
+def get_vendor_detail(access_token: str, realm_id: str, vendor_id: str) -> dict:
     url = f"{_api_base()}/v3/company/{realm_id}/vendor/{vendor_id}"
     params = {"minorversion": QBO_MINORVERSION}
     r = _request("GET", url, access_token, params=params)
     if r.status_code >= 400:
-        raise RuntimeError(f"QBO vendor get failed ({r.status_code}): {r.text}")
+        raise RuntimeError(f"QBO vendor/{vendor_id} failed ({r.status_code}): {r.text}")
     return r.json()
 
 
-def extract_vendor_otros(vendor_payload: dict) -> str:
+def extract_vendor_otro(vendor_payload: dict) -> str:
     """
-    Devuelve el valor del campo 'Otro' del proveedor.
-    En QuickBooks suele venir en Vendor.OtherContactInfo con Type='Other'
-    pero puede variar; por eso hay varios fallbacks.
+    Intenta sacar el campo 'Otro' del vendor.
+    En QBO normalmente está como CustomField con Name='Otro' (depende cómo lo configuraste).
+    Devuelve string tipo '2/1' o '' si no existe.
     """
-    v = (vendor_payload or {}).get("Vendor", {}) or {}
+    vendor = vendor_payload.get("Vendor", {}) if isinstance(vendor_payload, dict) else {}
+    # 1) CustomField
+    for cf in (vendor.get("CustomField") or []):
+        name = (cf.get("Name") or cf.get("name") or "").strip().lower()
+        if name in ("otro", "otros", "other"):
+            val = (cf.get("StringValue") or cf.get("stringValue") or cf.get("Value") or "").strip()
+            if val:
+                return val
 
-    # 1) OtherContactInfo: lista
-    oci = v.get("OtherContactInfo") or []
-    if isinstance(oci, list):
-        for item in oci:
-            t = (item.get("Type") or "").strip().lower()
-            if t == "other":
-                # algunos tenants usan "Value", otros "Telephone"
-                val = (item.get("Value") or item.get("Telephone") or "").strip()
-                if val:
-                    return val
-
-    # 2) Fallbacks posibles
-    for key in ("Other", "Notes", "NotesText", "Memo"):
-        val = v.get(key)
-        if isinstance(val, str) and val.strip():
-            return val.strip()
+    # 2) Fallback por si lo guardaste en Notes (raro, pero por si acaso)
+    notes = (vendor.get("Notes") or "").strip()
+    if notes and "/" in notes:
+        return notes
 
     return ""
+
+
 
 # -------------------------
 # ✅ REPORTS API (GENÉRICO)
