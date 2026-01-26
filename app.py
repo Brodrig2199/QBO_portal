@@ -297,8 +297,7 @@ def download_qbo_report_xlsx():
         download_name=filename,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-@app.get("/download/informe43.xlsx")
-@login_required
+
 @app.get("/download/informe43.xlsx")
 @login_required
 def download_informe43_xlsx():
