@@ -187,6 +187,106 @@ def get_report(access_token: str, realm_id: str, report_name: str, **params) -> 
         raise RuntimeError(f"QBO report '{report_name}' failed ({r.status_code}): {r.text}")
     return r.json()
 
+def qbo_get(access_token: str, realm_id: str, path: str, params: dict | None = None) -> dict:
+    url = f"{_api_base()}/v3/company/{realm_id}/{path.lstrip('/')}"
+    params = params or {}
+    params["minorversion"] = QBO_MINORVERSION
+    r = _request("GET", url, access_token, params=params)
+    if r.status_code >= 400:
+        raise RuntimeError(f"QBO GET '{path}' failed ({r.status_code}): {r.text}")
+    return r.json()
+
+
+def get_all_vendors_map(access_token: str, realm_id: str, max_per_page: int = 1000) -> dict:
+    """
+    Devuelve {displayname_lower: vendor_id} trayendo TODOS los vendors.
+    Evita hacer 1 query por vendor.
+    """
+    out = {}
+    start = 1
+
+    while True:
+        q = f"SELECT Id, DisplayName FROM Vendor STARTPOSITION {start} MAXRESULTS {max_per_page}"
+        data = qbo_query(q, access_token, realm_id)
+        vendors = data.get("QueryResponse", {}).get("Vendor", []) or []
+
+        for v in vendors:
+            dn = (v.get("DisplayName") or "").strip()
+            if dn:
+                out[dn.lower()] = v.get("Id")
+
+        if len(vendors) < max_per_page:
+            break
+
+        start += max_per_page
+
+    return out
+
+
+def get_vendors_other_by_ids_batch(access_token: str, realm_id: str, vendor_ids: list[str]) -> dict:
+    """
+    Devuelve {vendor_id: "2/1"} leyendo Vendor por Batch API (más rápido que 1x1).
+    """
+    if not vendor_ids:
+        return {}
+
+    url = f"{_api_base()}/v3/company/{realm_id}/batch"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+    out: dict[str, str] = {}
+
+    # QBO batch suele aceptar ~30 por request; chunk por seguridad
+    CHUNK = 25
+    for i in range(0, len(vendor_ids), CHUNK):
+        chunk = vendor_ids[i:i+CHUNK]
+
+        batch_items = []
+        for j, vid in enumerate(chunk, start=1):
+            batch_items.append({
+                "bId": str(j),
+                "operation": "read",
+                "Vendor": {"Id": str(vid)}
+            })
+
+        payload = {"BatchItemRequest": batch_items}
+        r = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+        if r.status_code >= 400:
+            raise RuntimeError(f"QBO batch vendor read failed ({r.status_code}): {r.text}")
+
+        resp = r.json()
+        items = resp.get("BatchItemResponse", []) or []
+
+        for item in items:
+            v = (item.get("Vendor") or {})
+            vid = str(v.get("Id") or "")
+
+            # ---- Buscar el campo "Other" (UI: "Otro") ----
+            other_val = ""
+
+            # 1) Algunos tenants lo guardan en OtherContactInfo
+            oci = v.get("OtherContactInfo") or []
+            if isinstance(oci, list):
+                for x in oci:
+                    # distintos formatos posibles
+                    val = (x.get("Value") or x.get("value") or "").strip()
+                    typ = (x.get("Type") or x.get("type") or "").strip().lower()
+                    if val and (typ in ("other", "otro") or typ == ""):
+                        other_val = val
+                        break
+
+            # 2) Fallback: a veces lo meten en Notes
+            if not other_val:
+                other_val = (v.get("Notes") or "").strip()
+
+            if vid:
+                out[vid] = other_val
+
+    return out
+
 
 # ✅ Detalle de Pérdidas y Ganancias
 def get_profit_and_loss_detail(

@@ -299,6 +299,8 @@ def download_qbo_report_xlsx():
     )
 @app.get("/download/informe43.xlsx")
 @login_required
+@app.get("/download/informe43.xlsx")
+@login_required
 def download_informe43_xlsx():
     meta = session.get("last_report_meta")
     if not meta:
@@ -329,16 +331,16 @@ def download_informe43_xlsx():
     import re, io
     from datetime import datetime
     from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.styles import Font, Alignment, PatternFill
     from openpyxl.utils import get_column_letter
 
-    cols = [(c or "").strip().lower() for c in table.get("columns", [])]
+    cols = [(c or "").strip().lower() for c in (table.get("columns") or [])]
 
     def find_col_contains(*keys):
-        for k in keys:
-            kk = (k or "").strip().lower()
-            for i, c in enumerate(cols):
-                if kk in c:
+        keys = [k.lower() for k in keys]
+        for i, c in enumerate(cols):
+            for k in keys:
+                if k in c:
                     return i
         return None
 
@@ -351,9 +353,11 @@ def download_informe43_xlsx():
         return (cells[idx] or "").strip()
 
     def to_float(x):
+        s = (x or "").strip()
+        if not s:
+            return 0.0
         try:
-            s = str(x).replace(",", "").strip()
-            return float(s) if s else 0.0
+            return float(s.replace(",", ""))
         except:
             return 0.0
 
@@ -366,55 +370,9 @@ def download_informe43_xlsx():
                 return datetime.strptime(s, f).strftime("%Y%m%d")
             except:
                 pass
-        # si ya viene como 20251205
         if len(s) == 8 and s.isdigit():
             return s
         return ""
-
-    def parse_vendor(name):
-        """
-        Soporta:
-        1) NOMBRE/TIPO/RUC/DV  Ej: BANCO GENERAL/2/280-134-61098/2
-        2) NOMBRE/TIPO         Ej: AMAZON/3
-        """
-        raw = (name or "").strip()
-        if not raw:
-            return ("", "", "", "")
-
-        tipo_map = {"1": "N", "2": "J", "3": "E"}
-
-        m = re.match(r'^\s*(.+?)\s*/\s*([123])\s*/\s*([^/]+)\s*/\s*([^/]+)\s*$', raw)
-        if m:
-            return (
-                tipo_map.get(m.group(2).strip(), ""),
-                m.group(3).strip(),
-                m.group(4).strip(),
-                m.group(1).strip()
-            )
-
-        m2 = re.match(r'^\s*(.+?)\s*/\s*([123])\s*$', raw)
-        if m2:
-            return (
-                tipo_map.get(m2.group(2).strip(), ""),
-                "",
-                "",
-                m2.group(1).strip()
-            )
-
-        return ("", "", "", raw.replace("/", " ").strip())
-
-    def parse_otros(otros_raw: str):
-        """
-        OTROS esperado: "CONCEPTO/COMPRAS"
-        Ej: "1/505" => concepto=1, compras=505
-        """
-        s = (otros_raw or "").strip()
-        if not s:
-            return ("", "")
-        parts = [p.strip() for p in s.split("/") if p.strip()]
-        concepto = parts[0] if len(parts) >= 1 else ""
-        compras = parts[1] if len(parts) >= 2 else ""
-        return (concepto, compras)
 
     def is_panama_cedula(ruc: str) -> bool:
         s = (ruc or "").strip().upper()
@@ -434,136 +392,89 @@ def download_informe43_xlsx():
         digits = re.sub(r"\D", "", r)
         if len(digits) >= 10:
             return "J"
+
         return ""
 
     def normalize_factura(factura_raw: str, seq_num: int) -> str:
         f = (factura_raw or "").strip()
         return f if f else f"F-{seq_num}"
 
-    # -------------------------
-    # ✅ Concepto/Compras desde Vendor.Otro (API) con match robusto + paginación
-    # -------------------------
-    import unicodedata
-
-    def norm_key(s: str) -> str:
+    def parse_vendor(name):
         """
-        Normaliza para match:
-        - uppercase
-        - sin acentos
-        - solo letras/números/espacios
-        - colapsa espacios
+        Soporta:
+        1) NOMBRE/TIPO/RUC/DV   ej: BANCO GENERAL/2/280-134-61098/2
+        2) NOMBRE/TIPO         ej: AMAZON/3
         """
-        s = (s or "").strip().upper()
-        s = unicodedata.normalize("NFKD", s)
-        s = "".join(ch for ch in s if not unicodedata.combining(ch))  # quita acentos
-        # deja solo alfanum y espacios
-        s = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in s)
-        s = " ".join(s.split())
-        return s
-
-    def base_name(s: str) -> str:
-        return (s or "").split("/")[0].strip()
-
-    # 1) Traer vendors paginando (hasta 5000 por seguridad)
-    vendor_index = {}      # key normalizada -> vendor_id
-    vendor_key_list = []   # lista de keys para fallback "contiene"
-    start = 1
-    page_size = 1000
-    total_loaded = 0
-
-    while True:
-        chunk = get_vendors(access_token, realm_id, active_only=False, max_results=page_size, start_position=start)
-        if not chunk:
-            break
-
-        for v in chunk:
-            full = norm_key(v["name"])
-            base = norm_key(base_name(v["name"]))
-
-            if full and full not in vendor_index:
-                vendor_index[full] = v["id"]
-                vendor_key_list.append(full)
-
-            if base and base not in vendor_index:
-                vendor_index[base] = v["id"]
-                vendor_key_list.append(base)
-
-        total_loaded += len(chunk)
-        if len(chunk) < page_size or total_loaded >= 5000:
-            break
-        start += page_size
-
-    # 2) Cache para no llamar vendor/{id} repetido
-    vendor_otro_cache: dict[str, str] = {}
-
-    def get_vendor_id_from_report_name(name_from_report: str) -> str | None:
-        """
-        Match usando:
-        1) key completa normalizada
-        2) base name normalizado
-        3) fallback: contiene
-        """
-        raw = (name_from_report or "").strip()
+        raw = (name or "").strip()
         if not raw:
-            return None
+            return ("", "", "", "")
 
-        k_full = norm_key(raw)
-        k_base = norm_key(base_name(raw))
+        tipo_map = {"1": "N", "2": "J", "3": "E"}
 
-        vid = vendor_index.get(k_full) or vendor_index.get(k_base)
+        m = re.match(r'^\s*(.+?)\s*/\s*([123])\s*/\s*([^/]+)\s*/\s*([^/]+)\s*$', raw)
+        if m:
+            return (tipo_map.get(m.group(2).strip(), ""), m.group(3).strip(), m.group(4).strip(), m.group(1).strip())
+
+        m2 = re.match(r'^\s*(.+?)\s*/\s*([123])\s*$', raw)
+        if m2:
+            return (tipo_map.get(m2.group(2).strip(), ""), "", "", m2.group(1).strip())
+
+        return ("", "", "", raw.replace("/", " ").strip())
+
+    def parse_otros_2_1(otros_raw: str):
+        """
+        OTRO esperado "2/1" => concepto=2, compras=1
+        """
+        s = (otros_raw or "").strip()
+        if not s:
+            return ("", "")
+        parts = [p.strip() for p in s.split("/") if p.strip()]
+        return (parts[0] if len(parts) >= 1 else "", parts[1] if len(parts) >= 2 else "")
+
+    # -------------------------
+    # Column mapping (P&L Detail)
+    # -------------------------
+    idx_fecha   = find_col_contains("fecha", "date")
+    idx_no      = find_col_contains("n.", "no", "nº", "numero", "number")
+    idx_nombre  = find_col_contains("nombre", "name")
+    idx_importe = find_col_contains("importe", "amount")
+
+    # Cuenta contable (tu columna de QuickBooks)
+    idx_cuenta_contable = find_col_contains("cuenta de división de artículo", "cuenta de division de articulo", "cuenta contable", "account")
+
+    # -------------------------
+    # 1) Sacar lista de vendors del reporte (NOMBRE limpio)
+    # -------------------------
+    vendor_names_needed = set()
+    for r in (table.get("rows") or []):
+        if r.get("is_header") or r.get("is_summary"):
+            continue
+        nombre_raw = cell(r, idx_nombre)
+        if not nombre_raw:
+            continue
+        _, _, _, nombre_limpio = parse_vendor(nombre_raw)
+        if nombre_limpio:
+            vendor_names_needed.add(nombre_limpio.strip().lower())
+
+    # -------------------------
+    # 2) Construir mapa DisplayName->Id y luego Id->Other usando Batch
+    # -------------------------
+    from qbo_client import get_all_vendors_map, get_vendors_other_by_ids_batch
+
+    vendors_map = get_all_vendors_map(access_token, realm_id)  # {display_lower: id}
+
+    ids_to_fetch = []
+    name_to_id = {}
+    for vn in vendor_names_needed:
+        vid = vendors_map.get(vn)
         if vid:
-            return vid
+            name_to_id[vn] = str(vid)
+            ids_to_fetch.append(str(vid))
 
-        # fallback "contiene" (más lento, pero solo si falló)
-        # intentamos con base primero
-        target = k_base or k_full
-        if not target:
-            return None
-
-        for k in vendor_key_list:
-            if target in k:
-                return vendor_index.get(k)
-
-        return None
-
-    def get_otro_for_vendor_name(name_from_report: str) -> str:
-        vendor_id = get_vendor_id_from_report_name(name_from_report)
-        if not vendor_id:
-            return ""
-
-        if vendor_id in vendor_otro_cache:
-            return vendor_otro_cache[vendor_id]
-
-        payload = get_vendor_detail(access_token, realm_id, vendor_id)
-        otro = extract_vendor_otro(payload)  # ejemplo "2/1"
-        vendor_otro_cache[vendor_id] = (otro or "").strip()
-        return vendor_otro_cache[vendor_id]
-
-
-
-   # -------------------------
-    # Map columnas del P&L
-    # -------------------------
-    idx_nombre  = find_col_contains("nombre")
-    idx_no      = find_col_contains("n.", "no")
-    idx_fecha   = find_col_contains("fecha")
-    idx_importe = find_col_contains("importe")
-
-    # ✅ Cuenta contable (ya viene en el P&L)
-    idx_cuenta = find_col_contains(
-        "cuenta", 
-        "account",
-        "dividir",                      # en tu screenshot aparece "Dividir"
-        "cuenta de división", 
-        "cuenta de division",
-        "cuenta de división de artículo",
-        "cuenta de division de articulo"
-    )
-    
-
+    vendors_other_by_id = get_vendors_other_by_ids_batch(access_token, realm_id, ids_to_fetch)  # {id:"2/1"}
 
     # -------------------------
-    # CONSTRUIR FILAS INFORME 43 (DESDE P&L)
+    # 3) Construir filas INFORME 43
     # -------------------------
     rows_out = []
     seq = 1
@@ -578,43 +489,43 @@ def download_informe43_xlsx():
 
         tipo_from_name, ruc_from_name, dv, nombre = parse_vendor(nombre_raw)
 
-        # si el nombre no trae ruc, quedará vacío (ok). Igual inferimos tipo si se puede.
-        ruc = ruc_from_name or ""
-        tipo = infer_tipo_persona(tipo_from_name, ruc)
+        # Tipo final N/J/E arreglado (con RUC)
+        tipo = infer_tipo_persona(tipo_from_name, ruc_from_name)
 
-        # ✅ Concepto / Compras salen del Vendor "Otro"
-        otro_raw = get_otro_for_vendor_name(nombre_raw)  # trae "2/1"
-        concepto, compras = parse_otros(otro_raw)        # concepto="2", compras="1"
-
-
+        # Factura con fallback
         factura = normalize_factura(cell(r, idx_no), seq)
         seq += 1
 
-        monto = to_float(cell(r, idx_importe))
+        # Montos
+        monto_balboas = to_float(cell(r, idx_importe))
+        itbms_pagado = 0.00  # ✅ autocompletar ITBMS con cero en P&L
 
-        cuenta_contable = cell(r, idx_cuenta) if idx_cuenta is not None else ""
+        # Cuenta contable
+        cuenta_contable = cell(r, idx_cuenta_contable)
 
+        # Concepto/Compras desde Vendor->Other (UI: "Otro")
+        vn = (nombre or "").strip().lower()
+        vid = name_to_id.get(vn)
+        otros_val = vendors_other_by_id.get(vid, "") if vid else ""
+        concepto, compras = parse_otros_2_1(otros_val)
+        app.logger.info(f"VENDOR='{nombre}' vid='{vid}' OTHER='{otros_val}' => concepto='{concepto}' compras='{compras}'")
 
         rows_out.append([
-            tipo,                              # TIPO
-            ruc,                               # RUC
-            dv,                                # DV
-            nombre,                            # NOMBRE
-            factura,                           # FACTURA (F-n)
-            to_yyyymmdd(cell(r, idx_fecha)),   # FECHA yyyymmdd
-            concepto,                          # CONCEPTO (de OTROS)
-            compras,                           # COMPRAS (de OTROS)
-            monto,                             # MONTO EN BALBOAS (importe)
-            0.00,                               # ITBMS PAGADO (cero)
-            cuenta_contable      # ✅ CUENTA CONTABLE desde el P&L
-            
+            tipo,                        # TIPO DE PERSONA
+            ruc_from_name,               # RUC
+            dv,                          # DV
+            nombre,                      # NOMBRE O RAZON SOCIAL
+            factura,                     # FACTURA
+            to_yyyymmdd(cell(r, idx_fecha)),  # FECHA
+            concepto,                    # CONCEPTO (Vendor->Otro: antes del /)
+            compras,                     # COMPRAS (Vendor->Otro: después del /)
+            monto_balboas,               # MONTO EN BALBOAS
+            itbms_pagado,                # ITBMS PAGADO (0.00)
+            cuenta_contable,             # CUENTA CONTABLE
         ])
 
-
-
-
     # -------------------------
-    # Crear Excel
+    # Crear Excel (ligero para Render)
     # -------------------------
     wb = Workbook()
     ws = wb.active
@@ -631,43 +542,39 @@ def download_informe43_xlsx():
         "COMPRAS DE BIENES Y SERVICIOS",
         "MONTO EN BALBOAS",
         "ITBMS PAGADO EN BALBOAS",
-        "CUENTA CONTABLE",  
-
+        "CUENTA CONTABLE",
     ]
 
     bold = Font(bold=True)
     fill = PatternFill("solid", fgColor="EFEFEF")
-    thin = Side(style="thin")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
+    # Título
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
-    ws["A1"] = "INFORME 43 - FORMATO A DILIGENCIAR (VAT)"
+    ws["A1"] = "INFORME 43 - FORMATO A DILIGENCIAR"
     ws["A1"].font = Font(bold=True, size=13)
 
     ws.append([])
     ws.append([])
 
+    # Header en fila 5
     for i, h in enumerate(headers, start=1):
         c = ws.cell(row=5, column=i, value=h)
         c.font = bold
         c.fill = fill
-        c.border = border
         c.alignment = Alignment(horizontal="center", wrap_text=True)
 
-    for rr, rowvals in enumerate(rows_out, start=6):
-        for cc, val in enumerate(rowvals, start=1):
-            cellx = ws.cell(row=rr, column=cc, value=val)
-            cellx.border = border
+    # Data desde fila 6
+    for r_i, rowvals in enumerate(rows_out, start=6):
+        ws.append(rowvals)
 
-            # Texto para RUC y DV
-            if cc in (2, 3):
-                cellx.number_format = '@'
+    # Formatos
+    for r_i in range(6, 6 + len(rows_out)):
+        ws.cell(row=r_i, column=9).number_format = '#,##0.00'   # MONTO
+        ws.cell(row=r_i, column=10).number_format = '#,##0.00'  # ITBMS
+        ws.cell(row=r_i, column=2).number_format = '@'          # RUC texto
+        ws.cell(row=r_i, column=3).number_format = '@'          # DV texto
 
-            # Formato moneda para MONTO e ITBMS
-            if cc in (9, 10):
-                cellx.number_format = '#,##0.00'
-
-    widths = [16, 18, 6, 35, 14, 12, 18, 30, 18, 22]
+    widths = [14, 20, 8, 35, 14, 12, 12, 22, 16, 18, 34]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -683,6 +590,7 @@ def download_informe43_xlsx():
         download_name=f"INFORME43_{meta['start_date']}_{meta['end_date']}.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
 @app.get("/download/informe43_vat.xlsx")
 @login_required
 def download_informe43_vat_xlsx():
