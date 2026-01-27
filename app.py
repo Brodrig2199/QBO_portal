@@ -419,33 +419,26 @@ def download_informe43_xlsx():
             return (tipo_map.get(m2.group(2).strip(), ""), "", "", m2.group(1).strip())
 
         return ("", "", "", raw.replace("/", " ").strip())
-    import html
+    
 
     def norm_key(s: str) -> str:
-        """
-        Normaliza texto para hacer match:
-        - decodifica HTML entities (B&#x2F; -> /)
-        - lower
-        - trim
-        - colapsa espacios
-        """
         s = html.unescape((s or "").strip())
         s = re.sub(r"\s+", " ", s)
         return s.lower().strip()
 
-    def vendor_display_to_clean(display_name: str) -> str:
+    def extract_ruc_dv_from_display(display_name: str):
         """
-        Convierte DisplayName real del proveedor a 'nombre limpio' para poder mapearlo con el reporte.
-        Ej:
-        'ABOLU, S.A/2/16429-109-156121/61' -> 'ABOLU, S.A'
-        'A DE AMBAR, S. EP./2/155747633-2-2024/13' -> 'A DE AMBAR, S. EP.'
+        From vendor DisplayName like:
+        "ABOLU, S.A/2/16429-109-156121/61"
+        returns ("16429-109-156121", "61")
         """
         dn = html.unescape((display_name or "").strip())
-        # Si termina con /tipo/ruc/dv, lo quitamos
-        m = re.match(r"^\s*(.+?)\s*/\s*[123]\s*/\s*[^/]+\s*/\s*[^/]+\s*$", dn)
-        if m:
-            dn = m.group(1).strip()
-        return norm_key(dn)
+        m = re.match(r"^(.+?)/([123])/([^/]+)/([^/]+)\s*$", dn)
+        if not m:
+            return ("", "")
+        ruc = (m.group(3) or "").strip()
+        dv  = (m.group(4) or "").strip()
+        return (ruc, dv)
 
     def parse_otros(notes_raw: str):
         """
@@ -498,41 +491,54 @@ def download_informe43_xlsx():
     # -------------------------
     from qbo_client import get_all_vendors_map, get_vendor_notes_by_ids
 
-    vendors_map = get_all_vendors_map(access_token, realm_id)
-    # vendors_map esperado: {display_lower: id}  (DisplayName real, puede traer "/2/...." y entities)
+ 
+    vendors_map = get_all_vendors_map(access_token, realm_id) or {}
+    # vendors_map esperado: {display_lower: id}
 
-    # ✅ Creamos 2 índices:
-    # 1) exacto por display_lower (por si el reporte trae el nombre completo con /...).
-    # 2) por nombre limpio (quitando /tipo/ruc/dv) para matchear con "ABOLU, S.A"
-    vendors_by_display = { norm_key(k): str(v) for k, v in (vendors_map or {}).items() }
-    vendors_by_clean   = {}
+    # ✅ índice por RUC|DV (lo más confiable)
+    rucdv_to_id = {}
+    # ✅ índice por display exacto (por si el reporte trae el nombre completo)
+    display_to_id = { norm_key(k): str(v) for k, v in vendors_map.items() }
 
-    for disp_lower, vid in vendors_by_display.items():
-        clean = vendor_display_to_clean(disp_lower)   # convierte display -> nombre limpio
-        if clean and clean not in vendors_by_clean:
-            vendors_by_clean[clean] = vid
+    for disp_lower, vid in display_to_id.items():
+        ruc, dv = extract_ruc_dv_from_display(disp_lower)
+        if ruc and dv:
+            rucdv_to_id[f"{ruc}|{dv}"] = str(vid)
 
-    # Ahora resolvemos IDs a buscar usando el nombre limpio del reporte
-    ids_to_fetch = []
-    name_to_id = {}  # {nombre_limpio_lower: vendor_id}
+    # ✅ ahora decidimos qué IDs buscar (de los vendors del reporte)
+    ids_to_fetch = set()
 
-    for vn in vendor_names_needed:
-        key = norm_key(vn)
+    for r in (table.get("rows") or []):
+        if r.get("is_header") or r.get("is_summary"):
+            continue
 
-        # 1) intenta exacto por display (por si viniera completo)
-        vid = vendors_by_display.get(key)
+        nombre_raw = cell(r, idx_nombre)
+        if not nombre_raw:
+            continue
 
-        # 2) si no, intenta por nombre limpio
+        tipo_from_name, ruc_from_name, dv, nombre = parse_vendor(nombre_raw)
+
+        # 1) intentar por RUC|DV
+        vid = rucdv_to_id.get(f"{ruc_from_name}|{dv}")
+
+        # 2) si no, intentar por display exacto (si el raw venía completo)
         if not vid:
-            vid = vendors_by_clean.get(key)
+            vid = display_to_id.get(norm_key(nombre_raw))
+
+        # 3) si no, intentar por nombre limpio (último fallback)
+        if not vid:
+            vid = display_to_id.get(norm_key(nombre))
 
         if vid:
-            name_to_id[key] = vid
-            ids_to_fetch.append(vid)
+            ids_to_fetch.add(str(vid))
 
-    # ✅ Fetch de notes (Notes) por IDs
-    vendor_notes_by_id = get_vendor_notes_by_ids(access_token, realm_id, ids_to_fetch)  # {"123":"2/1"}
+    ids_to_fetch = list(ids_to_fetch)
 
+    # ✅ traer Notes por IDs
+    vendor_notes_by_id = get_vendor_notes_by_ids(access_token, realm_id, ids_to_fetch) or {}
+    print("DEBUG vendors notes fetched:", len(vendor_notes_by_id))
+    some = list(vendor_notes_by_id.items())[:10]
+    print("DEBUG sample notes:", some)
 
     # -------------------------
     # 3) Construir filas INFORME 43
@@ -565,16 +571,23 @@ def download_informe43_xlsx():
         cuenta_contable = cell(r, idx_cuenta_contable)
 
         # ✅ Vendor Notes -> Concepto/Compras (por nombre limpio)
-        key = norm_key(nombre)  # nombre limpio del reporte
-        vid = name_to_id.get(key)
+        # ✅ Resolver vendor_id (RUC|DV primero)
+        vid = rucdv_to_id.get(f"{ruc_from_name}|{dv}")
+
+        if not vid:
+            # fallback por nombre (por si el vendor no tiene /ruc/dv en display)
+            vid = display_to_id.get(norm_key(nombre_raw)) or display_to_id.get(norm_key(nombre))
 
         notes_raw = vendor_notes_by_id.get(str(vid), "") if vid else ""
         concepto, compras = parse_otros(notes_raw)
 
 
+
         # ✅ Eliminar totales negativos (monto)
         if monto_balboas < 0:
             continue
+        if concepto == "" and compras == "":
+         print("DEBUG NO NOTES MATCH -> nombre_raw:", nombre_raw, "ruc:", ruc_from_name, "dv:", dv, "vid:", vid, "notes_raw:", notes_raw)
 
         rows_out.append([
             tipo,                        # TIPO DE PERSONA
