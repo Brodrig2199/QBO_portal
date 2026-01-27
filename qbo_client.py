@@ -222,10 +222,12 @@ def get_all_vendors_map(access_token: str, realm_id: str, max_per_page: int = 10
 
     return out
 
-def get_vendor_notes_by_ids(access_token: str, realm_id: str, vendor_ids: list[str], timeout: int = 30) -> dict:
+
+
+def get_vendor_notes_by_ids(access_token: str, realm_id: str, vendor_ids: list[str]) -> dict:
     """
-    Devuelve {vendor_id: notes_string} leyendo el campo Notes de Vendor.
-    Evita el BatchItemRequest (que te dio 2010) y usa lecturas individuales.
+    Lee Notes real de cada Vendor usando el endpoint /vendor/{id}.
+    Retorna: { "123": "2/1", "456": "1/505", ... }
     """
     if not vendor_ids:
         return {}
@@ -233,25 +235,32 @@ def get_vendor_notes_by_ids(access_token: str, realm_id: str, vendor_ids: list[s
     base = "https://quickbooks.api.intuit.com"
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "Accept": "application/json"
+        "Accept": "application/json",
     }
 
-    out: dict[str, str] = {}
+    out = {}
+    s = requests.Session()
+
+    # Para no reventar Render: limita y evita timeouts largos
     for vid in vendor_ids:
         try:
             url = f"{base}/v3/company/{realm_id}/vendor/{vid}"
-            r = requests.get(url, headers=headers, timeout=timeout)
+            r = s.get(url, headers=headers, params={"minorversion": "70"}, timeout=20)
             if r.status_code != 200:
-                # si un vendor falla, no tumbamos todo
+                # si falla, lo dejamos vacío pero no rompemos
                 out[str(vid)] = ""
                 continue
+
             data = r.json() or {}
-            v = data.get("Vendor") or {}
-            out[str(vid)] = (v.get("Notes") or "").strip()
+            vendor = data.get("Vendor") or {}
+            notes = (vendor.get("Notes") or "").strip()
+            out[str(vid)] = notes
+
         except Exception:
             out[str(vid)] = ""
 
     return out
+
 
 
 
