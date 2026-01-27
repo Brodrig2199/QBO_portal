@@ -537,9 +537,8 @@ def download_informe43_xlsx():
 
     # ✅ traer Notes por IDs
     vendor_notes_by_id = get_vendor_notes_by_ids(access_token, realm_id, ids_to_fetch) or {}
-    print("DEBUG vendors notes fetched:", len(vendor_notes_by_id))
-    some = list(vendor_notes_by_id.items())[:10]
-    print("DEBUG sample notes:", some)
+    print("DEBUG sample vendor notes:", list(vendor_notes_by_id.items())[:10])
+
 
     # -------------------------
     # 3) Construir filas INFORME 43
@@ -587,8 +586,9 @@ def download_informe43_xlsx():
         # ✅ Eliminar totales negativos (monto)
         if monto_balboas < 0:
             continue
-        if concepto == "" and compras == "":
-         print("DEBUG NO NOTES MATCH -> nombre_raw:", nombre_raw, "ruc:", ruc_from_name, "dv:", dv, "vid:", vid, "notes_raw:", notes_raw)
+        if not concepto and not compras:
+         print("DEBUG EMPTY notes -> vid:", vid, "nombre:", nombre, "notes:", notes_raw)
+
 
         rows_out.append([
             tipo,                        # TIPO DE PERSONA
