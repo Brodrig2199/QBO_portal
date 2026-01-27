@@ -420,15 +420,19 @@ def download_informe43_xlsx():
 
         return ("", "", "", raw.replace("/", " ").strip())
 
-    def parse_otros_2_1(otros_raw: str):
+    def parse_otros(notes_raw: str):
         """
-        OTRO esperado "2/1" => concepto=2, compras=1
+        NOTES esperado: "CONCEPTO/COMPRAS"
+        Ej: "2/1" o "2 / 1" -> concepto=2, compras=1
         """
-        s = (otros_raw or "").strip()
+        s = (notes_raw or "").strip()
         if not s:
             return ("", "")
-        parts = [p.strip() for p in s.split("/") if p.strip()]
-        return (parts[0] if len(parts) >= 1 else "", parts[1] if len(parts) >= 2 else "")
+        s = s.replace(" ", "")
+        parts = [p for p in s.split("/") if p]
+        concepto = parts[0] if len(parts) >= 1 else ""
+        compras = parts[1] if len(parts) >= 2 else ""
+        return (concepto, compras)
 
     # -------------------------
     # Column mapping (P&L Detail)
@@ -437,6 +441,8 @@ def download_informe43_xlsx():
     idx_no      = find_col_contains("n.", "no", "nº", "numero", "number")
     idx_nombre  = find_col_contains("nombre", "name")
     idx_importe = find_col_contains("importe", "amount")
+   
+
 
     # Cuenta contable (tu columna de QuickBooks)
     idx_cuenta_contable = find_col_contains("cuenta de división de artículo", "cuenta de division de articulo", "cuenta contable", "account")
@@ -445,6 +451,7 @@ def download_informe43_xlsx():
     # 1) Sacar lista de vendors del reporte (NOMBRE limpio)
     # -------------------------
     vendor_names_needed = set()
+    
     for r in (table.get("rows") or []):
         if r.get("is_header") or r.get("is_summary"):
             continue
@@ -458,7 +465,7 @@ def download_informe43_xlsx():
     # -------------------------
     # 2) Construir mapa DisplayName->Id y luego Id->Other usando Batch
     # -------------------------
-    from qbo_client import get_all_vendors_map, get_vendors_other_by_ids_query
+    from qbo_client import get_all_vendors_map, get_vendor_notes_by_ids
 
     vendors_map = get_all_vendors_map(access_token, realm_id)  # {display_lower: id}
 
@@ -470,7 +477,7 @@ def download_informe43_xlsx():
             name_to_id[vn] = str(vid)
             ids_to_fetch.append(str(vid))
 
-    vendors_other_by_id = get_vendors_other_by_ids_query(access_token, realm_id, ids_to_fetch)# {id:"2/1"}
+    vendors_other_by_id =  get_vendor_notes_by_ids(access_token, realm_id, ids_to_fetch)# {id:"2/1"}
 
     # -------------------------
     # 3) Construir filas INFORME 43
@@ -502,12 +509,12 @@ def download_informe43_xlsx():
         # Cuenta contable
         cuenta_contable = cell(r, idx_cuenta_contable)
 
-        # Concepto/Compras desde Vendor->Other (UI: "Otro")
-        vn = (nombre or "").strip().lower()
-        vid = name_to_id.get(vn)
-        otros_raw = vendors_other_by_id.get(vendor_id, "")
-        concepto, compras = parse_otros(otros_raw)
-        app.logger.info(f"VENDOR='{nombre}' vid='{vid}' OTHER='{otros_val}' => concepto='{concepto}' compras='{compras}'")
+        # Vendor Notes -> Concepto/Compras
+        key = (nombre or "").strip().lower()
+        vid = name_to_id.get(key)  # <- viene del mapeo DisplayName->Id
+
+        notes_raw = vendors_other_by_id.get(str(vid), "") if vid else ""
+        concepto, compras = parse_otros(notes_raw)
 
         rows_out.append([
             tipo,                        # TIPO DE PERSONA

@@ -222,41 +222,34 @@ def get_all_vendors_map(access_token: str, realm_id: str, max_per_page: int = 10
 
     return out
 
-
-def get_vendors_other_by_ids_query(access_token: str, realm_id: str, vendor_ids: list[str], chunk_size: int = 50) -> dict:
+def get_vendor_notes_by_ids(access_token: str, realm_id: str, vendor_ids: list[str], timeout: int = 30) -> dict:
     """
-    Trae Vendor por QUERY usando IN() y devuelve {vendor_id: other_value}
-    (sin usar /batch, porque en tu entorno da 400 ValidationFault 2010)
+    Devuelve {vendor_id: notes_string} leyendo el campo Notes de Vendor.
+    Evita el BatchItemRequest (que te dio 2010) y usa lecturas individuales.
     """
     if not vendor_ids:
         return {}
 
-    def chunks(lst, n):
-        for i in range(0, len(lst), n):
-            yield lst[i:i+n]
+    base = "https://quickbooks.api.intuit.com"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json"
+    }
 
-    out = {}
-
-    for group in chunks(vendor_ids, chunk_size):
-        ids_sql = ",".join([f"'{str(x)}'" for x in group])
-
-        # Trae campos típicos. "Other" existe en algunos tenants, en otros no.
-        # Por eso también traigo "Notes" como fallback.
-        q = f"SELECT Id, DisplayName, Notes, Other FROM Vendor WHERE Id IN ({ids_sql}) MAXRESULTS {len(group)}"
-        data = qbo_query(q, access_token, realm_id)
-
-        vendors = data.get("QueryResponse", {}).get("Vendor", []) or []
-        for v in vendors:
-            vid = str(v.get("Id", "")).strip()
-            if not vid:
+    out: dict[str, str] = {}
+    for vid in vendor_ids:
+        try:
+            url = f"{base}/v3/company/{realm_id}/vendor/{vid}"
+            r = requests.get(url, headers=headers, timeout=timeout)
+            if r.status_code != 200:
+                # si un vendor falla, no tumbamos todo
+                out[str(vid)] = ""
                 continue
-
-            other_val = (v.get("Other") or "").strip()
-            if not other_val:
-                # fallback si "Other" no viene
-                other_val = (v.get("Notes") or "").strip()
-
-            out[vid] = other_val
+            data = r.json() or {}
+            v = data.get("Vendor") or {}
+            out[str(vid)] = (v.get("Notes") or "").strip()
+        except Exception:
+            out[str(vid)] = ""
 
     return out
 
