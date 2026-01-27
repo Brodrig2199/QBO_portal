@@ -782,17 +782,20 @@ def download_informe43_vat_xlsx():
         return ("", "", "", raw.replace("/", " ").strip())
 
     def is_panama_cedula(ruc: str) -> bool:
-        import re
         s = (ruc or "").strip().upper()
         return bool(re.match(r'^\d{1,2}-\d{1,6}-\d{1,6}$', s))
 
-    def infer_tipo_persona(tipo_from_name: str, ruc: str) -> str:
-        import re
+    def infer_tipo_persona(tipo_from_name: str, ruc: str, nombre: str = "") -> str:
         t = (tipo_from_name or "").strip().upper()
         if t in ("N", "J", "E"):
             return t
 
         r = (ruc or "").strip().upper()
+
+        # ✅ si es tipo 8-NT-***-*** decidir por nombre
+        if is_ruc_nt(r):
+            return "J" if looks_like_company(nombre) else "N"
+
         if is_panama_cedula(r):
             return "N"
 
@@ -804,6 +807,33 @@ def download_informe43_vat_xlsx():
             return "J"
 
         return ""
+    def looks_like_company(nombre: str) -> bool:
+        n = (nombre or "").upper()
+
+        # señales típicas de empresa
+        company_tokens = [
+            "S.A", "SA", "S. A", "INC", "CORP", "CORPORATION", "LLC", "LTD", "SRL",
+            "S. DE R.L", "S DE RL", "S.A.S", "SAS", "CO.", "COMPANY",
+            "FUNDACION", "ASOCIACION", "MINISTERIO", "UNIVERSIDAD", "HOSPITAL",
+            "CLINICA", "COOPERATIVA", "IGLESIA", "BANCO"
+        ]
+        if any(t in n for t in company_tokens):
+            return True
+
+        # si tiene muchos símbolos típicos de razón social
+        if "&" in n or "," in n:
+            return True
+
+        # si tiene más de 3 palabras, suele ser entidad (heurística)
+        words = [w for w in re.split(r"\s+", n) if w]
+        if len(words) >= 4:
+            return True
+
+        return False
+    def is_ruc_nt(ruc: str) -> bool:
+        # ejemplo: 8-NT-123-456
+        s = (ruc or "").strip().upper()
+        return bool(re.match(r'^\d{1,2}-[A-Z]{1,3}-\d{1,6}-\d{1,6}$', s))
 
     # -------------------------
     # Construir filas y separar Informe 5 / Informe 6
@@ -828,19 +858,32 @@ def download_informe43_vat_xlsx():
             or (ruc_from_name or "").strip()
         )
 
-        tipo = infer_tipo_persona(tipo_from_name, ruc)
+        tipo = infer_tipo_persona(tipo_from_name, ruc, nombre)
 
         factura = normalize_factura(cell(r, idx_no) if idx_no is not None else "", seq)
         seq += 1
 
-        fecha = (cell(r, idx_fecha) if idx_fecha is not None else "").strip()
-        # si ya tienes to_yyyymmdd úsalo:
-        fecha_fmt = to_yyyymmdd(fecha) if "to_yyyymmdd" in globals() else fecha
+        fecha_raw = (cell(r, idx_fecha) if idx_fecha is not None else "").strip()
+
+        # primero intenta tu convertidor
+        fecha_fmt = to_yyyymmdd(fecha_raw)
+
+        # si por alguna razón no pudo, limpia todo lo que no sea número
+        if not fecha_fmt:
+            fecha_fmt = re.sub(r"\D", "", fecha_raw)
+
+        # ✅ garantizar sin guiones (por si acaso)
+        fecha_fmt = fecha_fmt.replace("-", "")
 
         base = to_float_safe(cell(r, idx_base) if idx_base is not None else "")
         itbms = to_float_safe(cell(r, idx_itbms) if idx_itbms is not None else "")
 
         tax_name = (cell(r, idx_tax_name) if idx_tax_name is not None else "").strip()
+        tax_name_l = tax_name.lower()
+
+        if "(ventas" in tax_name_l or " ventas)" in tax_name_l:
+             continue
+
 
         # ✅ eliminar negativos
         if is_negative_any(base, itbms):
@@ -912,6 +955,20 @@ def download_informe43_vat_xlsx():
     # Resultado final: informe 5 + informe 6
     # -------------------------
     rows_out = informe5 + informe6
+    # -------------------------
+    # ✅ Si las facturas quedan iguales -> agregar 'E' al final
+    # (si hay 3 iguales: 1 queda igual, 2 = E, 3 = EE, etc.)
+    # -------------------------
+    seen_fact = {}
+    for row in rows_out:
+        factura = (row[4] or "").strip()   # FACTURA está en índice 4
+        if not factura:
+            continue
+
+        cnt = seen_fact.get(factura, 0)
+        if cnt > 0:
+            row[4] = factura + ("E" * cnt)
+        seen_fact[factura] = cnt + 1
 
     # -------------------------
     # Crear Excel
