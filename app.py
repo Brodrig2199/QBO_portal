@@ -422,17 +422,21 @@ def download_informe43_xlsx():
 
     def parse_otros(notes_raw: str):
         """
-        NOTES esperado: "CONCEPTO/COMPRAS"
-        Ej: "2/1" o "2 / 1" -> concepto=2, compras=1
+        NOTES puede venir como:
+        "2/1"
+        "Concepto 2/1 algo"
+        "2 / 1"
+        Extrae el primer patrón num/num que encuentre.
         """
         s = (notes_raw or "").strip()
         if not s:
             return ("", "")
-        s = s.replace(" ", "")
-        parts = [p for p in s.split("/") if p]
-        concepto = parts[0] if len(parts) >= 1 else ""
-        compras = parts[1] if len(parts) >= 2 else ""
-        return (concepto, compras)
+
+        m = re.search(r'(\d+)\s*/\s*(\d+)', s)
+        if not m:
+            return ("", "")
+
+        return (m.group(1), m.group(2))
 
     # -------------------------
     # Column mapping (P&L Detail)
@@ -477,7 +481,7 @@ def download_informe43_xlsx():
             name_to_id[vn] = str(vid)
             ids_to_fetch.append(str(vid))
 
-    vendors_other_by_id =  get_vendor_notes_by_ids(access_token, realm_id, ids_to_fetch)# {id:"2/1"}
+    vendor_notes_by_id = get_vendor_notes_by_ids(access_token, realm_id, ids_to_fetch)  # { "123":"2/1" }
 
     # -------------------------
     # 3) Construir filas INFORME 43
@@ -509,12 +513,16 @@ def download_informe43_xlsx():
         # Cuenta contable
         cuenta_contable = cell(r, idx_cuenta_contable)
 
-        # Vendor Notes -> Concepto/Compras
+        # ✅ Vendor Notes -> Concepto/Compras (por nombre limpio)
         key = (nombre or "").strip().lower()
-        vid = name_to_id.get(key)  # <- viene del mapeo DisplayName->Id
+        vid = name_to_id.get(key)  # viene del mapeo DisplayName->Id
 
-        notes_raw = vendors_other_by_id.get(str(vid), "") if vid else ""
+        notes_raw = vendor_notes_by_id.get(str(vid), "") if vid else ""
         concepto, compras = parse_otros(notes_raw)
+
+        # ✅ Eliminar totales negativos (monto)
+        if monto_balboas < 0:
+            continue
 
         rows_out.append([
             tipo,                        # TIPO DE PERSONA
