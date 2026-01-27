@@ -458,7 +458,7 @@ def download_informe43_xlsx():
     # -------------------------
     # 2) Construir mapa DisplayName->Id y luego Id->Other usando Batch
     # -------------------------
-    from qbo_client import get_all_vendors_map, get_vendors_other_by_ids_batch
+    from qbo_client import get_all_vendors_map, get_vendors_other_by_ids_query
 
     vendors_map = get_all_vendors_map(access_token, realm_id)  # {display_lower: id}
 
@@ -470,7 +470,7 @@ def download_informe43_xlsx():
             name_to_id[vn] = str(vid)
             ids_to_fetch.append(str(vid))
 
-    vendors_other_by_id = get_vendors_other_by_ids_batch(access_token, realm_id, ids_to_fetch)  # {id:"2/1"}
+    vendors_other_by_id = get_vendors_other_by_ids_query(access_token, realm_id, ids_to_fetch)# {id:"2/1"}
 
     # -------------------------
     # 3) Construir filas INFORME 43
@@ -505,8 +505,8 @@ def download_informe43_xlsx():
         # Concepto/Compras desde Vendor->Other (UI: "Otro")
         vn = (nombre or "").strip().lower()
         vid = name_to_id.get(vn)
-        otros_val = vendors_other_by_id.get(vid, "") if vid else ""
-        concepto, compras = parse_otros_2_1(otros_val)
+        otros_raw = vendors_other_by_id.get(vendor_id, "")
+        concepto, compras = parse_otros(otros_raw)
         app.logger.info(f"VENDOR='{nombre}' vid='{vid}' OTHER='{otros_val}' => concepto='{concepto}' compras='{compras}'")
 
         rows_out.append([
