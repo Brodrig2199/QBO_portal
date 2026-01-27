@@ -419,6 +419,33 @@ def download_informe43_xlsx():
             return (tipo_map.get(m2.group(2).strip(), ""), "", "", m2.group(1).strip())
 
         return ("", "", "", raw.replace("/", " ").strip())
+    import html
+
+    def norm_key(s: str) -> str:
+        """
+        Normaliza texto para hacer match:
+        - decodifica HTML entities (B&#x2F; -> /)
+        - lower
+        - trim
+        - colapsa espacios
+        """
+        s = html.unescape((s or "").strip())
+        s = re.sub(r"\s+", " ", s)
+        return s.lower().strip()
+
+    def vendor_display_to_clean(display_name: str) -> str:
+        """
+        Convierte DisplayName real del proveedor a 'nombre limpio' para poder mapearlo con el reporte.
+        Ej:
+        'ABOLU, S.A/2/16429-109-156121/61' -> 'ABOLU, S.A'
+        'A DE AMBAR, S. EP./2/155747633-2-2024/13' -> 'A DE AMBAR, S. EP.'
+        """
+        dn = html.unescape((display_name or "").strip())
+        # Si termina con /tipo/ruc/dv, lo quitamos
+        m = re.match(r"^\s*(.+?)\s*/\s*[123]\s*/\s*[^/]+\s*/\s*[^/]+\s*$", dn)
+        if m:
+            dn = m.group(1).strip()
+        return norm_key(dn)
 
     def parse_otros(notes_raw: str):
         """
@@ -471,17 +498,41 @@ def download_informe43_xlsx():
     # -------------------------
     from qbo_client import get_all_vendors_map, get_vendor_notes_by_ids
 
-    vendors_map = get_all_vendors_map(access_token, realm_id)  # {display_lower: id}
+    vendors_map = get_all_vendors_map(access_token, realm_id)
+    # vendors_map esperado: {display_lower: id}  (DisplayName real, puede traer "/2/...." y entities)
 
+    # ✅ Creamos 2 índices:
+    # 1) exacto por display_lower (por si el reporte trae el nombre completo con /...).
+    # 2) por nombre limpio (quitando /tipo/ruc/dv) para matchear con "ABOLU, S.A"
+    vendors_by_display = { norm_key(k): str(v) for k, v in (vendors_map or {}).items() }
+    vendors_by_clean   = {}
+
+    for disp_lower, vid in vendors_by_display.items():
+        clean = vendor_display_to_clean(disp_lower)   # convierte display -> nombre limpio
+        if clean and clean not in vendors_by_clean:
+            vendors_by_clean[clean] = vid
+
+    # Ahora resolvemos IDs a buscar usando el nombre limpio del reporte
     ids_to_fetch = []
-    name_to_id = {}
-    for vn in vendor_names_needed:
-        vid = vendors_map.get(vn)
-        if vid:
-            name_to_id[vn] = str(vid)
-            ids_to_fetch.append(str(vid))
+    name_to_id = {}  # {nombre_limpio_lower: vendor_id}
 
-    vendor_notes_by_id = get_vendor_notes_by_ids(access_token, realm_id, ids_to_fetch)  # { "123":"2/1" }
+    for vn in vendor_names_needed:
+        key = norm_key(vn)
+
+        # 1) intenta exacto por display (por si viniera completo)
+        vid = vendors_by_display.get(key)
+
+        # 2) si no, intenta por nombre limpio
+        if not vid:
+            vid = vendors_by_clean.get(key)
+
+        if vid:
+            name_to_id[key] = vid
+            ids_to_fetch.append(vid)
+
+    # ✅ Fetch de notes (Notes) por IDs
+    vendor_notes_by_id = get_vendor_notes_by_ids(access_token, realm_id, ids_to_fetch)  # {"123":"2/1"}
+
 
     # -------------------------
     # 3) Construir filas INFORME 43
@@ -514,11 +565,12 @@ def download_informe43_xlsx():
         cuenta_contable = cell(r, idx_cuenta_contable)
 
         # ✅ Vendor Notes -> Concepto/Compras (por nombre limpio)
-        key = (nombre or "").strip().lower()
-        vid = name_to_id.get(key)  # viene del mapeo DisplayName->Id
+        key = norm_key(nombre)  # nombre limpio del reporte
+        vid = name_to_id.get(key)
 
         notes_raw = vendor_notes_by_id.get(str(vid), "") if vid else ""
         concepto, compras = parse_otros(notes_raw)
+
 
         # ✅ Eliminar totales negativos (monto)
         if monto_balboas < 0:
