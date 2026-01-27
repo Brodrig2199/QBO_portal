@@ -690,60 +690,228 @@ def download_informe43_vat_xlsx():
         return ("", "", "", raw.replace("/", " ").strip())
 
    
-   # -------------------------
-    # Map columnas VAT (evitar choque "importe" vs "importe sujeto")
     # -------------------------
-    idx_fecha = find_col_contains("fecha")
-    idx_no = find_col_contains("n.")
-    idx_ruc_cliente = find_col_contains("ruc no. de cliente")
-    idx_ruc_proveedor = find_col_contains("ruc no. de proveedor")
-    idx_nombre = find_col_contains("nombre")
+    # MAP COLUMNAS VAT
+    # -------------------------
+    cols = [(c or "").strip().lower() for c in table.get("columns", [])]
 
-    # ✅ MONTO EN BALBOAS = IMPORTE SUJETO A IMPUESTOS
-    idx_monto = find_col_contains("importe sujeto a impuestos", "importe sujeto")
+    def find_col_contains(*keywords):
+        for k in keywords:
+            k = (k or "").strip().lower()
+            for i, c in enumerate(cols):
+                if k and k in c:
+                    return i
+        return None
 
-    # ✅ ITBMS PAGADO = IMPORTE (PERO NO EL "IMPORTE SUJETO")
+    idx_fecha = find_col_contains("fecha", "date")
+    idx_no = find_col_contains("n.", "no", "numero")
+    idx_ruc_cliente = find_col_contains("ruc no. de cliente", "ruc cliente")
+    idx_ruc_proveedor = find_col_contains("ruc no. de proveedor", "ruc proveedor")
+    idx_nombre = find_col_contains("nombre", "name")
+
+    # ✅ Base imponible = "Importe sujeto a impuestos"
+    idx_base = find_col_contains("importe sujeto a impuestos", "importe sujeto", "taxable")
+
+    # ✅ ITBMS = "Importe" (pero no el que dice sujeto)
     idx_itbms = None
     for i, c in enumerate(cols):
-        c = (c or "").strip().lower()
-        if c == "importe" or c.startswith("importe "):   # agarra IMPORTE exacto
-            if "sujeto" not in c:                        # evita "importe sujeto"
-                idx_itbms = i
-                break
+        c2 = (c or "").strip().lower()
+        if (c2 == "importe" or c2.startswith("importe")) and ("sujeto" not in c2):
+            idx_itbms = i
+            break
 
-    # Construir filas INFORME 43 (VAT)
+    # ✅ Nombre del impuesto
+    idx_tax_name = find_col_contains("nombre del impuesto", "tax name", "impuesto")
+
     # -------------------------
-    rows_out = []
+    # Helpers extra
+    # -------------------------
+    def to_float_safe(x):
+        try:
+            return float(str(x).replace(",", "").strip() or "0")
+        except:
+            return 0.0
 
-    for r in table.get("rows", []):
+    def is_no_tax(base, itbms, tax_name):
+        # "no tiene impuesto" = ITBMS 0 o sin nombre de impuesto
+        if itbms == 0 and (not (tax_name or "").strip()):
+            return True
+        if itbms == 0 and (tax_name or "").strip().lower() in ("exento", "0", "sin impuesto"):
+            return True
+        # puedes endurecerlo si quieres: base > 0 y itbms == 0
+        return (itbms == 0)
+
+    def is_negative_any(base, itbms):
+        return (base < 0) or (itbms < 0)
+
+    def normalize_factura(factura_raw: str, seq_num: int) -> str:
+        f = (factura_raw or "").strip()
+        return f if f else f"F-{seq_num}"
+
+    def parse_vendor(name):
+        """
+        Soporta 2 formatos:
+        1) COMPLETO: NOMBRE/TIPO/RUC/DV   (BANCO GENERAL/2/280-134-61098/2)
+        2) PARCIAL:  NOMBRE/TIPO          (AMAZON/3)
+        """
+        import re
+        raw = (name or "").strip()
+        if not raw:
+            return ("", "", "", "")
+
+        tipo_map = {"1": "N", "2": "J", "3": "E"}
+
+        m = re.match(r'^\s*(.+?)\s*/\s*([123])\s*/\s*([^/]+)\s*/\s*([^/]+)\s*$', raw)
+        if m:
+            return (
+                tipo_map.get(m.group(2).strip(), ""),
+                m.group(3).strip(),
+                m.group(4).strip(),
+                m.group(1).strip()
+            )
+
+        m2 = re.match(r'^\s*(.+?)\s*/\s*([123])\s*$', raw)
+        if m2:
+            return (
+                tipo_map.get(m2.group(2).strip(), ""),
+                "",  # ruc vacío
+                "",  # dv vacío
+                m2.group(1).strip()
+            )
+
+        return ("", "", "", raw.replace("/", " ").strip())
+
+    def is_panama_cedula(ruc: str) -> bool:
+        import re
+        s = (ruc or "").strip().upper()
+        return bool(re.match(r'^\d{1,2}-\d{1,6}-\d{1,6}$', s))
+
+    def infer_tipo_persona(tipo_from_name: str, ruc: str) -> str:
+        import re
+        t = (tipo_from_name or "").strip().upper()
+        if t in ("N", "J", "E"):
+            return t
+
+        r = (ruc or "").strip().upper()
+        if is_panama_cedula(r):
+            return "N"
+
+        if r.startswith("E") or "PASAPORTE" in r or "PASS" in r:
+            return "E"
+
+        digits = re.sub(r"\D", "", r)
+        if len(digits) >= 10:
+            return "J"
+
+        return ""
+
+    # -------------------------
+    # Construir filas y separar Informe 5 / Informe 6
+    # -------------------------
+    informe5 = []  # con impuesto
+    informe6 = []  # sin impuesto
+    seq = 1
+
+    for r in (table.get("rows") or []):
         if r.get("is_header") or r.get("is_summary"):
             continue
 
-        nombre_raw = cell(r, idx_nombre)
+        nombre_raw = (cell(r, idx_nombre) if idx_nombre is not None else "").strip()
         if not nombre_raw:
             continue
 
-        tipo, ruc_from_name, dv, nombre = parse_vendor(nombre_raw)
+        tipo_from_name, ruc_from_name, dv, nombre = parse_vendor(nombre_raw)
 
-        # 🔹 Prioridad RUC
         ruc = (
-            cell(r, idx_ruc_proveedor)
-            or cell(r, idx_ruc_cliente)
-            or ruc_from_name
+            (cell(r, idx_ruc_proveedor) if idx_ruc_proveedor is not None else "").strip()
+            or (cell(r, idx_ruc_cliente) if idx_ruc_cliente is not None else "").strip()
+            or (ruc_from_name or "").strip()
         )
 
-        rows_out.append([
-        tipo,
-        ruc,
-        dv,
-        nombre,
-        cell(r, idx_no),
-        to_yyyymmdd(cell(r, idx_fecha)),
-        "",
-        "",
-        to_float(cell(r, idx_monto)),   # ✅ MONTO EN BALBOAS (importe sujeto a impuestos)
-        to_float(cell(r, idx_itbms)),   # ✅ ITBMS PAGADO (importe)
-])
+        tipo = infer_tipo_persona(tipo_from_name, ruc)
+
+        factura = normalize_factura(cell(r, idx_no) if idx_no is not None else "", seq)
+        seq += 1
+
+        fecha = (cell(r, idx_fecha) if idx_fecha is not None else "").strip()
+        # si ya tienes to_yyyymmdd úsalo:
+        fecha_fmt = to_yyyymmdd(fecha) if "to_yyyymmdd" in globals() else fecha
+
+        base = to_float_safe(cell(r, idx_base) if idx_base is not None else "")
+        itbms = to_float_safe(cell(r, idx_itbms) if idx_itbms is not None else "")
+
+        tax_name = (cell(r, idx_tax_name) if idx_tax_name is not None else "").strip()
+
+        # ✅ eliminar negativos
+        if is_negative_any(base, itbms):
+            continue
+
+        # columnas del formato + extras solicitadas
+        row_out = [
+            tipo,               # TIPO DE PERSONA
+            ruc,                # RUC
+            dv,                 # DV
+            nombre,             # NOMBRE O RAZON SOCIAL
+            factura,            # FACTURA
+            fecha_fmt,          # FECHA
+            "",                 # CONCEPTO (lo llenas en P&L; aquí VAT lo dejas como pediste antes)
+            "",                 # COMPRAS (igual)
+            base,               # MONTO EN BALBOAS = IMPORTE SUJETO A IMPUESTOS
+            itbms,              # ITBMS PAGADO EN BALBOAS = IMPORTE
+            "",                 # ORIGEN INFORME (lo pongo luego)
+            tax_name            # NOMBRE DEL IMPUESTO
+        ]
+
+        # Clasificar informe 5/6
+        if is_no_tax(base, itbms, tax_name):
+            # informe 6: solo sin impuesto
+            row_out[-2] = "INFORME 6"
+            informe6.append(row_out)
+        else:
+            row_out[-2] = "INFORME 5"
+            informe5.append(row_out)
+
+    # -------------------------
+    # 1) Eliminar duplicados exactos dentro de cada informe
+    # -------------------------
+    def dedup_exact(rows):
+        seen = set()
+        out = []
+        for row in rows:
+            key = tuple(row)  # TODO igual
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(row)
+        return out
+
+    informe5 = dedup_exact(informe5)
+    informe6 = dedup_exact(informe6)
+
+    # -------------------------
+    # 2) Si informe 6 repite EXACTAMENTE una fila de informe 5 -> eliminar de informe 6
+    #    (comparación "todo igual" excepto el ORIGEN INFORME)
+    # -------------------------
+    def key_without_origen(row):
+        # row[-2] es ORIGEN INFORME
+        tmp = list(row)
+        tmp[-2] = ""   # ignorar origen
+        return tuple(tmp)
+
+    keys_5 = set(key_without_origen(r) for r in informe5)
+
+    informe6_filtrado = []
+    for r in informe6:
+        if key_without_origen(r) in keys_5:
+            continue
+        informe6_filtrado.append(r)
+
+    informe6 = informe6_filtrado
+
+    # -------------------------
+    # Resultado final: informe 5 + informe 6
+    # -------------------------
+    rows_out = informe5 + informe6
 
     # -------------------------
     # Crear Excel
@@ -763,6 +931,8 @@ def download_informe43_vat_xlsx():
         "COMPRAS DE BIENES Y SERVICIOS",
         "MONTO EN BALBOAS",
         "ITBMS PAGADO EN BALBOAS",
+        "ORIGEN INFORME",
+        "NOMBRE DEL IMPUESTO",
     ]
 
     bold = Font(bold=True)
