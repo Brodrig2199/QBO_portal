@@ -2,6 +2,7 @@ import os
 import secrets
 import base64
 import io
+import html
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
