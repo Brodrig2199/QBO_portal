@@ -265,6 +265,29 @@ def get_vendor_notes_by_ids(access_token, realm_id, vendor_ids, timeout=30):
 
     return out
 
+def get_vendor_other_by_ids(access_token: str, realm_id: str, vendor_ids: list[str]) -> dict:
+        """
+        Devuelve {vendor_id: "2/1"} sacado de Vendor.AlternatePhone.FreeFormNumber (campo 'Otro')
+        """
+        out = {}
+        base = f"https://quickbooks.api.intuit.com/v3/company/{realm_id}/vendor/"
+        headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+
+        for vid in vendor_ids:
+            try:
+                r = requests.get(base + str(vid), headers=headers, timeout=30)
+                if r.status_code != 200:
+                    out[str(vid)] = ""
+                    continue
+
+                vendor = (r.json() or {}).get("Vendor") or {}
+                other = ((vendor.get("AlternatePhone") or {}).get("FreeFormNumber") or "").strip()
+                out[str(vid)] = other
+            except:
+                out[str(vid)] = ""
+
+        return out
+
 
 
 
