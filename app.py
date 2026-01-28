@@ -823,7 +823,10 @@ def download_informe43_vat_xlsx():
     idx_vendor_id = find_col_contains("vendor id", "vendorid", "proveedor id", "id proveedor")
 
     from qbo_client import get_all_vendors_map, get_vendor_other_by_ids
-
+    def norm_key(s: str) -> str:
+        s = html.unescape((s or "").strip())
+        s = re.sub(r"\s+", " ", s)
+        return s.lower().strip()
     vendors_map = get_all_vendors_map(access_token, realm_id) or {}
     # vendors_map esperado: { display_lower : id }
 
@@ -966,12 +969,6 @@ def download_informe43_vat_xlsx():
         s = (ruc or "").strip().upper()
         return bool(re.match(r'^\d{1,2}-[A-Z]{1,3}-\d{1,6}-\d{1,6}$', s))
     
-    import html
-
-    def norm_key(s: str) -> str:
-        s = html.unescape((s or "").strip())
-        s = re.sub(r"\s+", " ", s)
-        return s.lower().strip()
 
     def parse_concepto_compras(other_raw: str):
         s = (other_raw or "").strip()
