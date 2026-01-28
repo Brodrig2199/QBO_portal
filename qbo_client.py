@@ -223,62 +223,39 @@ def get_all_vendors_map(access_token: str, realm_id: str, max_per_page: int = 10
     return out
 
 
-
-def get_vendor_notes_by_ids(access_token: str, realm_id: str, vendor_ids: list[str]) -> dict:
+def get_vendor_notes_by_ids(access_token, realm_id, vendor_ids, chunk_size=30):
     """
-    Lee 'Notas' del Vendor usando /vendor/{id}.
-    Devuelve: { "804": "2/1", ... }
-    Soporta claves alternativas por si QBO no lo entrega como Vendor.Notes.
+    Retorna {vendor_id: notes}
+    Lee Notes desde Vendor usando QBO Query (más liviano que read 1x1).
     """
     if not vendor_ids:
         return {}
 
-    base = "https://quickbooks.api.intuit.com"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
+    # normalizar ids y quitar duplicados
+    ids = [str(x).strip() for x in vendor_ids if str(x).strip()]
+    ids = list(dict.fromkeys(ids))
 
     out = {}
-    s = requests.Session()
 
-    # DEBUG: imprime 1 vendor para ver estructura real (solo 1 vez)
-    debug_one = True
+    def chunks(lst, n):
+        for i in range(0, len(lst), n):
+            yield lst[i:i+n]
 
-    for vid in vendor_ids:
-        try:
-            url = f"{base}/v3/company/{realm_id}/vendor/{vid}"
-            r = s.get(url, headers=headers, params={"minorversion": "70"}, timeout=20)
+    for batch in chunks(ids, chunk_size):
+        in_list = ",".join([f"'{vid}'" for vid in batch])
+        q = f"select Id, Notes from Vendor where Id in ({in_list})"
 
-            if r.status_code != 200:
-                out[str(vid)] = ""
-                continue
+        data = qbo_query(q, access_token, realm_id)  # <-- usa tu helper existente
+        vendors = (data.get("QueryResponse") or {}).get("Vendor") or []
 
-            data = r.json() or {}
-            vendor = data.get("Vendor") or {}
-
-            if debug_one:
-                print("DEBUG VENDOR RAW JSON (one):", data)
-                debug_one = False
-
-            # ✅ Intenta varias llaves (QBO puede variar)
-            notes = (
-                (vendor.get("Notes") or "")
-                or (vendor.get("PrivateNote") or "")
-                or (vendor.get("Memo") or "")
-            )
-
-            # por si viene como dict/otro formato
-            if not isinstance(notes, str):
-                notes = str(notes)
-
-            out[str(vid)] = notes.strip()
-
-        except Exception as e:
-            out[str(vid)] = ""
+        for v in vendors:
+            vid = str(v.get("Id") or "").strip()
+            notes = (v.get("Notes") or "").strip()
+            if vid:
+                out[vid] = notes
 
     return out
+
 
 
 

@@ -356,10 +356,27 @@ def download_informe43_xlsx():
         s = (x or "").strip()
         if not s:
             return 0.0
+
+        # soporta unicode minus, paréntesis, y trailing minus
+        s = s.replace("−", "-")  # unicode minus
+        neg = False
+
+        if s.startswith("(") and s.endswith(")"):
+            neg = True
+            s = s[1:-1].strip()
+
+        if s.endswith("-"):
+            neg = True
+            s = s[:-1].strip()
+
+        s = s.replace(",", "")
+
         try:
-            return float(s.replace(",", ""))
+            val = float(s)
+            return -val if neg else val
         except:
             return 0.0
+
 
     def to_yyyymmdd(s):
         s = (s or "").strip()
@@ -539,7 +556,9 @@ def download_informe43_xlsx():
 
     # ✅ traer Notes por IDs
     vendor_notes_by_id = get_vendor_notes_by_ids(access_token, realm_id, ids_to_fetch) or {}
-    print("DEBUG sample vendor notes:", list(vendor_notes_by_id.items())[:10])
+    print("DEBUG notes count:", len([v for v in vendor_notes_by_id.values() if v]))
+    print("DEBUG sample notes:", list(vendor_notes_by_id.items())[:20])
+
 
 
     # -------------------------
@@ -573,21 +592,20 @@ def download_informe43_xlsx():
         cuenta_contable = cell(r, idx_cuenta_contable)
 
         # ✅ Vendor Notes -> Concepto/Compras
-        # 1) PRIORIDAD: Vendor ID directo desde el reporte (lo más confiable)
+       # 1) si el reporte trae vendor id directo, úsalo
         vid = cell(r, idx_vendor_id)
 
-        # 2) si no vino en el reporte, usa RUC|DV
+        # 2) si no viene, intenta por RUC|DV
         if not vid:
             vid = rucdv_to_id.get(f"{ruc_from_name}|{dv}")
 
-        # 3) si aún no, fallback por display/nombre
+        # 3) fallback por nombres
         if not vid:
             vid = display_to_id.get(norm_key(nombre_raw)) or display_to_id.get(norm_key(nombre))
 
-        vid = str(vid).strip() if vid else ""
-
-        notes_raw = vendor_notes_by_id.get(vid, "") if vid else ""
+        notes_raw = vendor_notes_by_id.get(str(vid), "") if vid else ""
         concepto, compras = parse_otros(notes_raw)
+
 
 
 
