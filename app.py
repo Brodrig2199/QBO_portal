@@ -553,9 +553,7 @@ def download_informe43_xlsx():
 
     # ✅ traer Notes por IDs
     vendor_notes_by_id = get_vendor_notes_by_ids(access_token, realm_id, ids_to_fetch) or {}
-    notes_nonempty = [v for v in vendor_notes_by_id.values() if (v or "").strip()]
-    print("DEBUG notes count:", len(notes_nonempty))
-    print("DEBUG sample notes:", list(vendor_notes_by_id.items())[:10])
+   
 
 
 
@@ -822,7 +820,39 @@ def download_informe43_vat_xlsx():
 
     # ✅ Nombre del impuesto
     idx_tax_name = find_col_contains("nombre del impuesto", "tax name", "impuesto")
+    idx_vendor_id = find_col_contains("vendor id", "vendorid", "proveedor id", "id proveedor")
 
+    from qbo_client import get_all_vendors_map, get_vendor_other_by_ids
+
+    vendors_map = get_all_vendors_map(access_token, realm_id) or {}
+    # vendors_map esperado: { display_lower : id }
+
+    display_to_id = {norm_key(k): str(v) for k, v in vendors_map.items()}
+
+    ids_to_fetch = set()
+
+    for r in (table.get("rows") or []):
+        if r.get("is_header") or r.get("is_summary"):
+            continue
+
+        # 1) si VAT trae VendorId directo
+        vid = cell(r, idx_vendor_id) if idx_vendor_id is not None else ""
+        if vid:
+            ids_to_fetch.add(str(vid))
+            continue
+
+        # 2) fallback: resolver por nombre (DisplayName)
+        nombre_raw = (cell(r, idx_nombre) if idx_nombre is not None else "").strip()
+        if not nombre_raw:
+            continue
+
+        # intentamos con el raw completo, o con el nombre limpio
+        _, _, _, nombre_limpio = parse_vendor(nombre_raw)
+        vid = display_to_id.get(norm_key(nombre_raw)) or display_to_id.get(norm_key(nombre_limpio))
+        if vid:
+            ids_to_fetch.add(str(vid))
+
+    vendor_other_by_id = get_vendor_other_by_ids(access_token, realm_id, list(ids_to_fetch)) or {}
     # -------------------------
     # Helpers extra
     # -------------------------
@@ -907,6 +937,28 @@ def download_informe43_vat_xlsx():
             return "J"
 
         return ""
+    def get_vendor_other_by_ids(access_token: str, realm_id: str, vendor_ids: list[str]) -> dict:
+        """
+        Devuelve {vendor_id: "2/1"} sacado de Vendor.AlternatePhone.FreeFormNumber (campo 'Otro')
+        """
+        out = {}
+        base = f"https://quickbooks.api.intuit.com/v3/company/{realm_id}/vendor/"
+        headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+
+        for vid in vendor_ids:
+            try:
+                r = requests.get(base + str(vid), headers=headers, timeout=30)
+                if r.status_code != 200:
+                    out[str(vid)] = ""
+                    continue
+
+                vendor = (r.json() or {}).get("Vendor") or {}
+                other = ((vendor.get("AlternatePhone") or {}).get("FreeFormNumber") or "").strip()
+                out[str(vid)] = other
+            except:
+                out[str(vid)] = ""
+
+        return out
     def looks_like_company(nombre: str) -> bool:
         n = (nombre or "").upper()
 
@@ -934,6 +986,18 @@ def download_informe43_vat_xlsx():
         # ejemplo: 8-NT-123-456
         s = (ruc or "").strip().upper()
         return bool(re.match(r'^\d{1,2}-[A-Z]{1,3}-\d{1,6}-\d{1,6}$', s))
+    
+    import html
+
+    def norm_key(s: str) -> str:
+        s = html.unescape((s or "").strip())
+        s = re.sub(r"\s+", " ", s)
+        return s.lower().strip()
+
+    def parse_concepto_compras(other_raw: str):
+        s = (other_raw or "").strip()
+        m = re.search(r'(\d+)\s*/\s*(\d+)', s)
+        return (m.group(1), m.group(2)) if m else ("", "")
 
     # -------------------------
     # Construir filas y separar Informe 5 / Informe 6
@@ -981,6 +1045,17 @@ def download_informe43_vat_xlsx():
         tax_name = (cell(r, idx_tax_name) if idx_tax_name is not None else "").strip()
         tax_name_l = tax_name.lower()
 
+        # Resolver vendor_id
+        vid = cell(r, idx_vendor_id) if idx_vendor_id is not None else ""
+
+        if not vid:
+            # fallback por nombre -> id
+            vid = display_to_id.get(norm_key(nombre_raw)) or display_to_id.get(norm_key(nombre))
+
+        other_raw = vendor_other_by_id.get(str(vid), "") if vid else ""
+        concepto, compras = parse_concepto_compras(other_raw)
+
+
         if "(ventas" in tax_name_l or " ventas)" in tax_name_l:
              continue
 
@@ -997,8 +1072,8 @@ def download_informe43_vat_xlsx():
             nombre,             # NOMBRE O RAZON SOCIAL
             factura,            # FACTURA
             fecha_fmt,          # FECHA
-            "",                 # CONCEPTO (lo llenas en P&L; aquí VAT lo dejas como pediste antes)
-            "",                 # COMPRAS (igual)
+            concepto,                 # CONCEPTO (lo llenas en P&L; aquí VAT lo dejas como pediste antes)
+            compras,                 # COMPRAS (igual)
             base,               # MONTO EN BALBOAS = IMPORTE SUJETO A IMPUESTOS
             itbms,              # ITBMS PAGADO EN BALBOAS = IMPORTE
             "",                 # ORIGEN INFORME (lo pongo luego)
