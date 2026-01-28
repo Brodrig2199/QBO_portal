@@ -484,11 +484,8 @@ def download_informe43_xlsx():
     idx_nombre  = find_col_contains("nombre", "name")
     idx_importe = find_col_contains("importe", "amount")
     idx_vendor_id = find_col_contains("vendor id", "proveedor id", "vendorid", "id proveedor")
-
-
-
-    # Cuenta contable (tu columna de QuickBooks)
-    idx_cuenta_contable = find_col_contains("cuenta de división de artículo", "cuenta de division de articulo", "cuenta contable", "account")
+    # ✅ Cuenta contable viene como "Dividir" en tu P&L Detail
+    idx_cuenta_contable = find_col_contains("dividir", "split")
 
     # -------------------------
     # 1) Sacar lista de vendors del reporte (NOMBRE limpio)

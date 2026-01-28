@@ -223,11 +223,11 @@ def get_all_vendors_map(access_token: str, realm_id: str, max_per_page: int = 10
     return out
 
 
-
 def get_vendor_notes_by_ids(access_token, realm_id, vendor_ids, timeout=30):
     """
-    Retorna {vendor_id: notes} leyendo Vendor por ID:
-    GET /v3/company/{realmId}/vendor/{id}
+    Retorna {vendor_id: value} leyendo Vendor por ID:
+    - Primero intenta "Otro" = Vendor.AlternatePhone.FreeFormNumber
+    - Si no existe, fallback a Vendor.Notes
     """
     if not vendor_ids:
         return {}
@@ -241,7 +241,6 @@ def get_vendor_notes_by_ids(access_token, realm_id, vendor_ids, timeout=30):
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Accept": "application/json",
-        "Content-Type": "application/json",
     }
 
     for vid in ids:
@@ -249,16 +248,20 @@ def get_vendor_notes_by_ids(access_token, realm_id, vendor_ids, timeout=30):
         r = requests.get(url, headers=headers, timeout=timeout)
 
         if r.status_code != 200:
-            # si falla, no tumbes el reporte; solo deja vacío
             out[vid] = ""
             continue
 
         data = r.json() or {}
-        v = data.get("Vendor") or {}
+        v = (data.get("Vendor") or {})
 
-        # Notes puede venir como "Notes" (normal) o a veces "Notes" no aparece
-        notes = (v.get("Notes") or "").strip()
-        out[vid] = notes
+        # ✅ "OTRO" en UI te está quedando aquí (como en n8n):
+        other_val = ((v.get("AlternatePhone") or {}).get("FreeFormNumber") or "").strip()
+
+        # fallback si no hay AlternatePhone:
+        if not other_val:
+            other_val = (v.get("Notes") or "").strip()
+
+        out[vid] = other_val
 
     return out
 
