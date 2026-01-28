@@ -466,7 +466,8 @@ def download_informe43_xlsx():
     idx_no      = find_col_contains("n.", "no", "nº", "numero", "number")
     idx_nombre  = find_col_contains("nombre", "name")
     idx_importe = find_col_contains("importe", "amount")
-   
+    idx_vendor_id = find_col_contains("vendor id", "proveedor id", "vendorid", "id proveedor")
+
 
 
     # Cuenta contable (tu columna de QuickBooks)
@@ -501,10 +502,11 @@ def download_informe43_xlsx():
     # ✅ índice por display exacto (por si el reporte trae el nombre completo)
     display_to_id = { norm_key(k): str(v) for k, v in vendors_map.items() }
 
-    for disp_lower, vid in display_to_id.items():
-        ruc, dv = extract_ruc_dv_from_display(disp_lower)
+    for disp_key, vid in display_to_id.items():
+        ruc, dv = extract_ruc_dv_from_display(disp_key)
         if ruc and dv:
             rucdv_to_id[f"{ruc}|{dv}"] = str(vid)
+
 
     # ✅ ahora decidimos qué IDs buscar (de los vendors del reporte)
     ids_to_fetch = set()
@@ -557,7 +559,7 @@ def download_informe43_xlsx():
         tipo_from_name, ruc_from_name, dv, nombre = parse_vendor(nombre_raw)
 
         # Tipo final N/J/E arreglado (con RUC)
-        tipo = infer_tipo_persona(tipo_from_name, ruc_from_name)
+        tipo = infer_tipo_persona(tipo_from_name, ruc_from_name or "")
 
         # Factura con fallback
         factura = normalize_factura(cell(r, idx_no), seq)
@@ -570,16 +572,23 @@ def download_informe43_xlsx():
         # Cuenta contable
         cuenta_contable = cell(r, idx_cuenta_contable)
 
-        # ✅ Vendor Notes -> Concepto/Compras (por nombre limpio)
-        # ✅ Resolver vendor_id (RUC|DV primero)
-        vid = rucdv_to_id.get(f"{ruc_from_name}|{dv}")
+        # ✅ Vendor Notes -> Concepto/Compras
+        # 1) PRIORIDAD: Vendor ID directo desde el reporte (lo más confiable)
+        vid = cell(r, idx_vendor_id)
 
+        # 2) si no vino en el reporte, usa RUC|DV
         if not vid:
-            # fallback por nombre (por si el vendor no tiene /ruc/dv en display)
+            vid = rucdv_to_id.get(f"{ruc_from_name}|{dv}")
+
+        # 3) si aún no, fallback por display/nombre
+        if not vid:
             vid = display_to_id.get(norm_key(nombre_raw)) or display_to_id.get(norm_key(nombre))
 
-        notes_raw = vendor_notes_by_id.get(str(vid), "") if vid else ""
+        vid = str(vid).strip() if vid else ""
+
+        notes_raw = vendor_notes_by_id.get(vid, "") if vid else ""
         concepto, compras = parse_otros(notes_raw)
+
 
 
 

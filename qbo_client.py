@@ -226,8 +226,9 @@ def get_all_vendors_map(access_token: str, realm_id: str, max_per_page: int = 10
 
 def get_vendor_notes_by_ids(access_token: str, realm_id: str, vendor_ids: list[str]) -> dict:
     """
-    Lee Notes real de cada Vendor usando el endpoint /vendor/{id}.
-    Retorna: { "123": "2/1", "456": "1/505", ... }
+    Lee 'Notas' del Vendor usando /vendor/{id}.
+    Devuelve: { "804": "2/1", ... }
+    Soporta claves alternativas por si QBO no lo entrega como Vendor.Notes.
     """
     if not vendor_ids:
         return {}
@@ -236,27 +237,45 @@ def get_vendor_notes_by_ids(access_token: str, realm_id: str, vendor_ids: list[s
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Accept": "application/json",
+        "Content-Type": "application/json",
     }
 
     out = {}
     s = requests.Session()
 
-    # Para no reventar Render: limita y evita timeouts largos
+    # DEBUG: imprime 1 vendor para ver estructura real (solo 1 vez)
+    debug_one = True
+
     for vid in vendor_ids:
         try:
             url = f"{base}/v3/company/{realm_id}/vendor/{vid}"
             r = s.get(url, headers=headers, params={"minorversion": "70"}, timeout=20)
+
             if r.status_code != 200:
-                # si falla, lo dejamos vacío pero no rompemos
                 out[str(vid)] = ""
                 continue
 
             data = r.json() or {}
             vendor = data.get("Vendor") or {}
-            notes = (vendor.get("Notes") or "").strip()
-            out[str(vid)] = notes
 
-        except Exception:
+            if debug_one:
+                print("DEBUG VENDOR RAW JSON (one):", data)
+                debug_one = False
+
+            # ✅ Intenta varias llaves (QBO puede variar)
+            notes = (
+                (vendor.get("Notes") or "")
+                or (vendor.get("PrivateNote") or "")
+                or (vendor.get("Memo") or "")
+            )
+
+            # por si viene como dict/otro formato
+            if not isinstance(notes, str):
+                notes = str(notes)
+
+            out[str(vid)] = notes.strip()
+
+        except Exception as e:
             out[str(vid)] = ""
 
     return out
