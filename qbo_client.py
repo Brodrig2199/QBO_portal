@@ -223,36 +223,42 @@ def get_all_vendors_map(access_token: str, realm_id: str, max_per_page: int = 10
     return out
 
 
-def get_vendor_notes_by_ids(access_token, realm_id, vendor_ids, chunk_size=30):
+
+def get_vendor_notes_by_ids(access_token, realm_id, vendor_ids, timeout=30):
     """
-    Retorna {vendor_id: notes}
-    Lee Notes desde Vendor usando QBO Query (más liviano que read 1x1).
+    Retorna {vendor_id: notes} leyendo Vendor por ID:
+    GET /v3/company/{realmId}/vendor/{id}
     """
     if not vendor_ids:
         return {}
 
-    # normalizar ids y quitar duplicados
     ids = [str(x).strip() for x in vendor_ids if str(x).strip()]
-    ids = list(dict.fromkeys(ids))
+    ids = list(dict.fromkeys(ids))  # unique
 
+    base = "https://quickbooks.api.intuit.com"
     out = {}
 
-    def chunks(lst, n):
-        for i in range(0, len(lst), n):
-            yield lst[i:i+n]
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
 
-    for batch in chunks(ids, chunk_size):
-        in_list = ",".join([f"'{vid}'" for vid in batch])
-        q = f"select Id, Notes from Vendor where Id in ({in_list})"
+    for vid in ids:
+        url = f"{base}/v3/company/{realm_id}/vendor/{vid}"
+        r = requests.get(url, headers=headers, timeout=timeout)
 
-        data = qbo_query(q, access_token, realm_id)  # <-- usa tu helper existente
-        vendors = (data.get("QueryResponse") or {}).get("Vendor") or []
+        if r.status_code != 200:
+            # si falla, no tumbes el reporte; solo deja vacío
+            out[vid] = ""
+            continue
 
-        for v in vendors:
-            vid = str(v.get("Id") or "").strip()
-            notes = (v.get("Notes") or "").strip()
-            if vid:
-                out[vid] = notes
+        data = r.json() or {}
+        v = data.get("Vendor") or {}
+
+        # Notes puede venir como "Notes" (normal) o a veces "Notes" no aparece
+        notes = (v.get("Notes") or "").strip()
+        out[vid] = notes
 
     return out
 

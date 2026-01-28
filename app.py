@@ -556,8 +556,9 @@ def download_informe43_xlsx():
 
     # ✅ traer Notes por IDs
     vendor_notes_by_id = get_vendor_notes_by_ids(access_token, realm_id, ids_to_fetch) or {}
-    print("DEBUG notes count:", len([v for v in vendor_notes_by_id.values() if v]))
-    print("DEBUG sample notes:", list(vendor_notes_by_id.items())[:20])
+    notes_nonempty = [v for v in vendor_notes_by_id.values() if (v or "").strip()]
+    print("DEBUG notes count:", len(notes_nonempty))
+    print("DEBUG sample notes:", list(vendor_notes_by_id.items())[:10])
 
 
 
@@ -592,14 +593,8 @@ def download_informe43_xlsx():
         cuenta_contable = cell(r, idx_cuenta_contable)
 
         # ✅ Vendor Notes -> Concepto/Compras
-       # 1) si el reporte trae vendor id directo, úsalo
-        vid = cell(r, idx_vendor_id)
+        vid = rucdv_to_id.get(f"{ruc_from_name}|{dv}")
 
-        # 2) si no viene, intenta por RUC|DV
-        if not vid:
-            vid = rucdv_to_id.get(f"{ruc_from_name}|{dv}")
-
-        # 3) fallback por nombres
         if not vid:
             vid = display_to_id.get(norm_key(nombre_raw)) or display_to_id.get(norm_key(nombre))
 
