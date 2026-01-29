@@ -45,11 +45,8 @@
      <a href="/connect" style="display:inline-block;padding:10px 14px;border-radius:10px;background:#f59e0b;color:#111827;font-weight:800;text-decoration:none;">
       Conectar QuickBooks
      </a>
-        <script>
-      document.getElementById("btnConnect")?.addEventListener("click", () => {
-        sessionStorage.setItem("QBO_CONNECTING", "1");
-      });
-        </script>
+        
+      
 
       <form method="post" action="/run-report">
         <label>Tipo de reporte</label>
@@ -119,14 +116,7 @@
       el.style.display = hay.includes(q) ? 'flex' : 'none';
     });
   });
-  (function () {
-  function doLogoutBeacon() {
-    // Si estoy en proceso de OAuth, NO cierres sesión
-    if (sessionStorage.getItem("QBO_CONNECTING") === "1") return;
-    try { navigator.sendBeacon("/logout-beacon", ""); } catch (e) {}
-  }
-  window.addEventListener("pagehide", doLogoutBeacon);
-})();
+ 
 </script>
 </body>
 </html>
