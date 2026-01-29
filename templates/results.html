@@ -182,5 +182,15 @@
       </div>
     </div>
   </div>
+ <script>
+(function () {
+  function doLogoutBeacon() {
+    try { navigator.sendBeacon("/logout-beacon", ""); } catch (e) {}
+  }
+  window.addEventListener("pagehide", doLogoutBeacon);
+  window.addEventListener("beforeunload", doLogoutBeacon);
+})();
+</script>
+ 
 </body>
 </html>

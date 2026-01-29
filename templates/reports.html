@@ -115,6 +115,13 @@
       el.style.display = hay.includes(q) ? 'flex' : 'none';
     });
   });
+  (function () {
+  function doLogoutBeacon() {
+    try { navigator.sendBeacon("/logout-beacon", ""); } catch (e) {}
+  }
+  window.addEventListener("pagehide", doLogoutBeacon);
+  window.addEventListener("beforeunload", doLogoutBeacon);
+})();
 </script>
 </body>
 </html>
