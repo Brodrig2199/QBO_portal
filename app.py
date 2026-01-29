@@ -8,6 +8,7 @@ from functools import wraps
 
 import requests
 from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from token_store import init_db, save_tokens
 from qbo_client import (
@@ -30,8 +31,33 @@ try:
 except Exception as e:
     print("DB init skipped:", e)
 
-LOGIN_USER = os.environ.get("LOGIN_USER", "admin")
-LOGIN_PASS = os.environ.get("LOGIN_PASS", "admin123")
+def load_users_from_env():
+    """
+    APP_USERS:
+      - modo plano:   "admin:admin123,brian:clave123"
+      - modo seguro:  "admin:pbkdf2:sha256:...,brian:pbkdf2:sha256:..."
+    """
+    raw = (os.environ.get("APP_USERS") or "").strip()
+
+    users = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair or ":" not in pair:
+            continue
+        username, secret = pair.split(":", 1)
+        username = username.strip()
+        secret = secret.strip()
+
+        # Si el "secret" ya parece hash de werkzeug (empieza con pbkdf2: o scrypt:)
+        # lo guardamos tal cual. Si no, lo hasheamos al cargar.
+        if secret.startswith(("pbkdf2:", "scrypt:")):
+            users[username] = secret
+        else:
+            users[username] = generate_password_hash(secret)
+
+    return users
+
+USERS = load_users_from_env()
 
 REPORT_TYPES = [
     {"id": "profit_and_loss_detail", "name": "Detalle de Pérdidas y Ganancias", "qbo": "ProfitAndLossDetail"},
@@ -97,12 +123,15 @@ def login():
 
 @app.post("/login")
 def login_post():
-    username = request.form.get("username", "")
-    password = request.form.get("password", "")
-    if username == LOGIN_USER and password == LOGIN_PASS:
+    username = (request.form.get("username") or "").strip()
+    password = (request.form.get("password") or "").strip()
+
+    stored_hash = USERS.get(username)
+    if stored_hash and check_password_hash(stored_hash, password):
         session["logged_in"] = True
         session["username"] = username
         return redirect(url_for("reports"))
+
     flash("Usuario o contraseña incorrectos.")
     return redirect(url_for("login"))
 
@@ -111,6 +140,11 @@ def login_post():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+@app.post("/logout-beacon")
+def logout_beacon():
+    session.clear()
+    return ("", 204)
+
 
 
 @app.get("/connect")
